@@ -271,7 +271,12 @@ function MadNLP.build_sensitivity_rhs_matrix!(
     @assert size(∇pg,2) == q
     @assert size(∇pg,1) == m
 
-    R1 = -MadNLP._augment_with_slack_zeros(∇xpL, n_tot - size(∇xpL,1))
-    R2 = -∇pg
-    return vcat(R1, R2)
+    slackzeros = similar(∇xpL, n_tot - size(∇xpL,1), q)
+    fill!(slackzeros, zero(eltype(∇xpL)))
+
+    return vcat(
+        ∇xpL,
+        slackzeros,
+        -∇pg
+    )
 end
