@@ -1,3 +1,31 @@
+"""
+    NormalKKTSystem{T, VT, MT, VI, VI32, LS} <: AbstractKKTSystem{T, VT, MT, ExactHessian{T, VT}}
+
+Normal equations KKT system for linear programs:
+
+```
+A Σ⁻¹ Aᵀ Δy = A Σ⁻¹ r₁ - r₂
+```
+
+where the primal update is recovered as:
+```
+Δx = Σ⁻¹ (r₁ - Aᵀ Δy)
+```
+
+The associated matrix structure is:
+```
+[Σ⁻¹    Aᵀ]  [Δx]   [r₁]
+[A      0 ]  [Δy] = [r₂]
+```
+
+with
+* ``A``: Jacobian matrix of all constraints (equality and inequality)
+* ``Σ⁻¹``: Diagonal matrix with primal regularization terms
+* ``r₁``: Primal residual vector
+* ``r₂``: Dual residual vector
+* ``Δx``: Primal variable update
+* ``Δy``: Dual variable update
+"""
 struct NormalKKTSystem{T, VT, MT, VI, VI32, LS} <: MadNLP.AbstractKKTSystem{T, VT, MT, MadNLP.ExactHessian{T, VT}}
     # Augmented system
     aug_com::MT
