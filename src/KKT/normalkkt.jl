@@ -259,3 +259,19 @@ function MadNLP.mul!(w::MadNLP.AbstractKKTVector{T}, kkt::NormalKKTSystem, v::Ma
     MadNLP._kktmul!(w,v,kkt.reg, kkt.du_diag, kkt.l_lower, kkt.u_lower, kkt.l_diag, kkt.u_diag, alpha, beta)
     return w
 end
+
+function MadNLP.build_sensitivity_rhs_matrix!(
+    kkt::NormalKKTSystem,
+    ∇xpL::AbstractMatrix,
+    ∇pg::AbstractMatrix,
+)
+    n_tot = kkt.n
+    m      = kkt.m
+    q      = size(∇xpL, 2)
+    @assert size(∇pg,2) == q
+    @assert size(∇pg,1) == m
+
+    R1 = -MadNLP._augment_with_slack_zeros(∇xpL, n_tot - size(∇xpL,1))
+    R2 = -∇pg
+    return vcat(R1, R2)
+end
