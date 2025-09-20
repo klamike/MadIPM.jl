@@ -260,7 +260,7 @@ function MadNLP.mul!(w::MadNLP.AbstractKKTVector{T}, kkt::NormalKKTSystem, v::Ma
     return w
 end
 
-function MadNLP.build_sensitivity_rhs_matrix!(
+function MadNLP.build_sensitivity_rhs_matrix(
     kkt::NormalKKTSystem,
     ∇xpL::AbstractMatrix,
     ∇pg::AbstractMatrix,
