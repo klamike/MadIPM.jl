@@ -162,6 +162,11 @@ function MOI.get(optimizer::Optimizer, attr::MOI.ObjectiveValue)
     return optimizer.stats.objective
 end
 
+function MOI.get(optimizer::Optimizer, attr::MOI.DualObjectiveValue)
+    MOI.check_result_index_bounds(optimizer, attr)
+    return MadIPM.dual_objective(optimizer.solver, no_quadratic_term = false)
+end
+
 function MOI.get(optimizer::Optimizer, attr::MOI.PrimalStatus)
     if attr.result_index > MOI.get(optimizer, MOI.ResultCount())
         return MOI.NO_SOLUTION

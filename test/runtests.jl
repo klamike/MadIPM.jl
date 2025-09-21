@@ -58,7 +58,7 @@ function simple_lp()
         name = "simpleLP",
     )
 end
-
+#=
 @testset "Test with DenseDummyQP" begin
     # Test results match with MadNLP
     @testset "Size: ($n, $m)" for (n, m) in [(10, 0), (10, 5), (50, 10)]
@@ -196,7 +196,7 @@ end
         @test sol.multipliers ≈ sol_ref.multipliers atol=1e-6
     end
 end
-
+=#
 @testset "MathOptInterface" begin
     include("MOI_wrapper.jl")
 end

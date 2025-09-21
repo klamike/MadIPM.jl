@@ -421,7 +421,18 @@ end
 =#
 
 # Dual objective
-function dual_objective(solver::MPCSolver)
+function dual_objective(solver::MPCSolver; no_quadratic_term = true)
+    # Get current primal variables
+    x = MadNLP.primal(solver.x)
+    
+    # Compute quadratic term: -½xᵀHx (for QPs)
+    quadratic_term = 0.0
+    if !no_quadratic_term && solver.nlp.meta.nnzh > 0
+        # For QPs with Hessian, include the quadratic term
+        quadratic_term += -0.5 * dot(x, solver.kkt.hess_com * x)
+    end
+    
+    # Linear terms (same as before)
     dobj = -dot(solver.y, solver.rhs)
     if length(solver.xl_r) > 0
         dobj += dot(solver.zl_r, solver.xl_r)
@@ -429,7 +440,8 @@ function dual_objective(solver::MPCSolver)
     if length(solver.xu_r) > 0
         dobj -= dot(solver.zu_r, solver.xu_r)
     end
-    return dobj
+    
+    return dobj + quadratic_term
 end
 
 function get_optimality_gap(solver::MPCSolver)
@@ -444,4 +456,3 @@ function get_optimality_gap(solver::MPCSolver)
         1.0,
     )
 end
-

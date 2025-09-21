@@ -17,8 +17,6 @@ function test_runtests()
             MOI.VariableName,
             MOI.ObjectiveBound,
             MOI.SolverVersion,
-            # TODO dual not done yet
-            MOI.DualObjectiveValue,
             MOI.ConstraintDual,
         ],
     )
