@@ -260,23 +260,6 @@ function MadNLP.mul!(w::MadNLP.AbstractKKTVector{T}, kkt::NormalKKTSystem, v::Ma
     return w
 end
 
-function build_sensitivity_rhs_matrix(
-    kkt::NormalKKTSystem,
-    ∇xpL::AbstractMatrix,
-    ∇pg::AbstractMatrix,
-)
-    n_tot = kkt.n
-    m      = kkt.m
-    q      = size(∇xpL, 2)
-    @assert size(∇pg,2) == q
-    @assert size(∇pg,1) == m
-
-    slackzeros = similar(∇xpL, n_tot - size(∇xpL,1), q)
-    fill!(slackzeros, zero(eltype(∇xpL)))
-
-    return vcat(
-        ∇xpL,
-        slackzeros,
-        -∇pg
-    )
+function MadNLP.get_slack_padding(kkt::NormalKKTSystem)
+    return 0
 end
