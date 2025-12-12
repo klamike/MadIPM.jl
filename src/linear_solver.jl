@@ -11,8 +11,8 @@ function factorize_regularized_system!(solver)
         if is_factorized(solver.kkt.linear_solver)
             break
         end
-        solver.del_w *= 100.0
-        solver.del_c *= 100.0
+        solver.del_w[] *= 100.0
+        solver.del_c[] *= 100.0
     end
 end
 

@@ -13,9 +13,9 @@ function init_starting_point!(solver::MadNLP.AbstractMadNLPSolver)
     res = solver.jacl
 
     # Add initial primal-dual regularization
-    solver.kkt.reg .= solver.del_w
-    solver.kkt.pr_diag .= solver.del_w
-    solver.kkt.du_diag .= solver.del_c
+    solver.kkt.reg .= solver.del_w[]
+    solver.kkt.pr_diag .= solver.del_w[]
+    solver.kkt.du_diag .= solver.del_c[]
 
     # Step 0: factorize initial KKT system
     MadNLP.factorize_wrapper!(solver)
@@ -163,24 +163,24 @@ function initialize!(solver::MadNLP.AbstractMadNLPSolver{T}) where T
     init_regularization!(solver, solver.opt.regularization)
 
     # Initializing callbacks
-    solver.obj_val = MadNLP.eval_f_wrapper(solver, solver.x)
+    solver.obj_val[] = MadNLP.eval_f_wrapper(solver, solver.x)
     MadNLP.eval_jac_wrapper!(solver, solver.kkt, solver.x)
     MadNLP.eval_grad_f_wrapper!(solver, solver.f, solver.x)
     MadNLP.eval_cons_wrapper!(solver, solver.c, solver.x)
     MadNLP.eval_lag_hess_wrapper!(solver, solver.kkt, solver.x, solver.y)
 
     # Normalization factors
-    solver.norm_b = norm(solver.rhs, Inf)
-    solver.norm_c = norm(MadNLP.primal(solver.f), Inf)
+    solver.norm_b[] = norm(solver.rhs, Inf)
+    solver.norm_c[] = norm(MadNLP.primal(solver.f), Inf)
 
     # Find initial position
     init_starting_point!(solver)
 
-    solver.mu = opt.mu_init
+    solver.mu[] = opt.mu_init
 
     solver.cnt.start_time = time()
 
-    solver.best_complementarity = typemax(typeof(solver.best_complementarity))
+    solver.best_complementarity[] = typemax(typeof(solver.best_complementarity[]))
 
     solver.status = MadNLP.REGULAR
 
@@ -193,23 +193,23 @@ end
 =#
 function update_termination_criteria!(solver::MadNLP.AbstractMadNLPSolver)
     dobj = dual_objective(solver) # dual objective
-    solver.inf_pr = MadNLP.get_inf_pr(solver.c) / max(1.0, solver.norm_b)
-    solver.inf_du = MadNLP.get_inf_du(
+    solver.inf_pr[] = MadNLP.get_inf_pr(solver.c) / max(1.0, solver.norm_b[])
+    solver.inf_du[] = MadNLP.get_inf_du(
         MadNLP.full(solver.f),
         MadNLP.full(solver.zl),
         MadNLP.full(solver.zu),
         solver.jacl,
         1.0,
-    ) / max(1.0, solver.norm_c)
-    solver.inf_compl = get_optimality_gap(solver) / max(1.0, solver.norm_c)
-    solver.best_complementarity = min(solver.best_complementarity, solver.inf_compl)
+    ) / max(1.0, solver.norm_c[])
+    solver.inf_compl[] = get_optimality_gap(solver) / max(1.0, solver.norm_c[])
+    solver.best_complementarity[] = min(solver.best_complementarity[], solver.inf_compl[])
     
-    if max(solver.inf_pr, solver.inf_du, solver.inf_compl) <= solver.opt.tol
+    if max(solver.inf_pr[], solver.inf_du[], solver.inf_compl[]) <= solver.opt.tol
         solver.status = MadNLP.SOLVE_SUCCEEDED
-    elseif ((solver.inf_compl > solver.opt.divergence_tol * solver.best_complementarity) &&
-            (dobj > max(10.0 * abs(solver.obj_val), 1.0)))
+    elseif ((solver.inf_compl[] > solver.opt.divergence_tol * solver.best_complementarity[]) &&
+            (dobj > max(10.0 * abs(solver.obj_val[]), 1.0)))
         solver.status = MadNLP.INFEASIBLE_PROBLEM_DETECTED
-    elseif solver.obj_val < - solver.opt.divergence_tol * max(10.0, abs(dobj), 1.0)
+    elseif solver.obj_val[] < - solver.opt.divergence_tol * max(10.0, abs(dobj), 1.0)
         solver.status = MadNLP.DIVERGING_ITERATES
     elseif solver.cnt.k >= solver.opt.max_iter
         solver.status = MadNLP.MAXIMUM_ITERATIONS_EXCEEDED
@@ -231,12 +231,12 @@ function prediction_step_size!(solver::MadNLP.AbstractMadNLPSolver)
     alpha_aff_p, alpha_aff_d = get_fraction_to_boundary_step(solver, 1.0)
     mu_affine = get_affine_complementarity_measure(solver, alpha_aff_p, alpha_aff_d)
     get_correction!(solver, solver.correction_lb, solver.correction_ub)
-    solver.mu_curr = update_barrier!(solver.opt.barrier_update, solver, mu_affine)
+    solver.mu_curr[] = update_barrier!(solver.opt.barrier_update, solver, mu_affine)
     return
 end
 
 function mehrotra_correction_direction!(solver)
-    set_correction_rhs!(solver, solver.kkt, solver.mu, solver.correction_lb, solver.correction_ub, solver.ind_lb, solver.ind_ub)
+    set_correction_rhs!(solver, solver.kkt, solver.mu[], solver.correction_lb, solver.correction_ub, solver.ind_lb, solver.ind_ub)
     solve_system!(solver.d, solver, solver.p)
     return
 end
@@ -261,7 +261,7 @@ function gondzio_correction_direction!(solver)
         tilde_alpha_d = min(alpha_d + δ, 1.0)
         # Apply Mehrotra's heuristic for centering parameter mu.
         ga = get_affine_complementarity_measure(solver, tilde_alpha_p, tilde_alpha_d)
-        g = solver.mu_curr
+        g = solver.mu_curr[]
         mu = (ga / g)^2 * ga  # Eq. (12)
         # Add additional correction.
         set_extra_correction!(
@@ -305,18 +305,18 @@ function update_step_size!(solver)
     return
 end
 function apply_step!(solver::MadNLP.AbstractMadNLPSolver)
-    axpy!(solver.alpha_p, MadNLP.primal(solver.d), MadNLP.primal(solver.x))
-    axpy!(solver.alpha_d, MadNLP.dual(solver.d), solver.y)
-    solver.zl_r .+= solver.alpha_d .* MadNLP.dual_lb(solver.d)
-    solver.zu_r .+= solver.alpha_d .* MadNLP.dual_ub(solver.d)
-    MadNLP.adjust_boundary!(solver.x_lr,solver.xl_r,solver.x_ur,solver.xu_r,solver.mu)
+    axpy!(solver.alpha_p[], MadNLP.primal(solver.d), MadNLP.primal(solver.x))
+    axpy!(solver.alpha_d[], MadNLP.dual(solver.d), solver.y)
+    solver.zl_r .+= solver.alpha_d[] .* MadNLP.dual_lb(solver.d)
+    solver.zu_r .+= solver.alpha_d[] .* MadNLP.dual_ub(solver.d)
+    MadNLP.adjust_boundary!(solver.x_lr,solver.xl_r,solver.x_ur,solver.xu_r,solver.mu[])
 
     solver.cnt.k += 1
     return
 end
 
 function evaluate_model!(solver::MadNLP.AbstractMadNLPSolver)
-    solver.obj_val = MadNLP.eval_f_wrapper(solver, solver.x)
+    solver.obj_val[] = MadNLP.eval_f_wrapper(solver, solver.x)
     MadNLP.eval_cons_wrapper!(solver, solver.c, solver.x)
     MadNLP.eval_grad_f_wrapper!(solver, solver.f, solver.x)
     # A' y

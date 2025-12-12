@@ -25,7 +25,7 @@ end
 function batch_mehrotra_correction_direction!(batch_solver::BatchMPCSolver)
     for solver in batch_solver
         is_done(solver) && continue
-        set_correction_rhs!(solver, solver.kkt, solver.mu, solver.correction_lb, solver.correction_ub, solver.ind_lb, solver.ind_ub)
+        set_correction_rhs!(solver, solver.kkt, solver.mu[], solver.correction_lb, solver.correction_ub, solver.ind_lb, solver.ind_ub)
     end
 
     for solver in batch_solver
@@ -50,7 +50,7 @@ function batch_evaluate_model!(batch_solver::BatchMPCSolver)
     # TODO: use NLPModels.batch_*
     for solver in batch_solver
         is_done(solver) && continue
-        solver.obj_val = MadNLP.eval_f_wrapper(solver, solver.x)
+        solver.obj_val[] = MadNLP.eval_f_wrapper(solver, solver.x)
     end
 
     for solver in batch_solver

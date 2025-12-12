@@ -44,6 +44,7 @@ function BatchPrimalVector(
     return BatchPrimalVector(values, values_lr_views, values_ur_views, x_views, s_views, full_views, variable_view, slack_view, batch_size, nx, ns)
 end
 
+# TODO: will these be needed?
 MadNLP.full(bpv::BatchPrimalVector) = bpv.values
 MadNLP.full(bpv::BatchPrimalVector, i::Int) = bpv.full_views[i]
 MadNLP.primal(bpv::BatchPrimalVector) = bpv.values
@@ -117,6 +118,7 @@ function BatchUnreducedKKTVector(
     )
 end
 
+# TODO: will these be needed?
 MadNLP.full(buktv::BatchUnreducedKKTVector) = buktv.values
 MadNLP.full(buktv::BatchUnreducedKKTVector, i::Int) = buktv.full_views[i]
 MadNLP.primal(buktv::BatchUnreducedKKTVector) = buktv.primal_view
@@ -129,53 +131,3 @@ MadNLP.dual_lb(buktv::BatchUnreducedKKTVector) = buktv.dual_lb_view
 MadNLP.dual_lb(buktv::BatchUnreducedKKTVector, i::Int) = buktv.xzl[i]
 MadNLP.dual_ub(buktv::BatchUnreducedKKTVector) = buktv.dual_ub_view
 MadNLP.dual_ub(buktv::BatchUnreducedKKTVector, i::Int) = buktv.xzu[i]
-
-struct ViewBasedPrimalVector{T, VT<:AbstractVector{T}} <: MadNLP.AbstractPrimalVector{T, VT}
-    values::VT
-    values_lr
-    values_ur
-    x
-    s
-end
-
-function ViewBasedPrimalVector(values::VT, nx::Int, ns::Int, ind_lb, ind_ub) where {T, VT <: AbstractVector{T}}
-    x = MadNLP._madnlp_unsafe_wrap(values, nx)
-    s = MadNLP._madnlp_unsafe_wrap(values, ns, nx+1)
-    values_lr = view(values, ind_lb)
-    values_ur = view(values, ind_ub)
-    return ViewBasedPrimalVector{T, VT}(values, values_lr, values_ur, x, s)
-end
-
-MadNLP.full(rhs::ViewBasedPrimalVector) = rhs.values
-MadNLP.primal(rhs::ViewBasedPrimalVector) = rhs.values
-MadNLP.variable(rhs::ViewBasedPrimalVector) = rhs.x
-MadNLP.slack(rhs::ViewBasedPrimalVector) = rhs.s
-
-struct ViewBasedUnreducedKKTVector{T, VT<:AbstractVector{T}} <: MadNLP.AbstractUnreducedKKTVector{T, VT}
-    values::VT
-    x
-    xp
-    xp_lr
-    xp_ur
-    xl
-    xzl
-    xzu
-end
-
-function ViewBasedUnreducedKKTVector(values::VT, n::Int, m::Int, nlb::Int, nub::Int, ind_lb, ind_ub) where {T, VT <: AbstractVector{T}}
-    x = MadNLP._madnlp_unsafe_wrap(values, n + m)  # Primal-Dual
-    xp = MadNLP._madnlp_unsafe_wrap(values, n)  # Primal
-    xl = MadNLP._madnlp_unsafe_wrap(values, m, n+1)  # Dual
-    xzl = MadNLP._madnlp_unsafe_wrap(values, nlb, n + m + 1)  # Lower bound
-    xzu = MadNLP._madnlp_unsafe_wrap(values, nub, n + m + nlb + 1)  # Upper bound
-    xp_lr = view(xp, ind_lb)
-    xp_ur = view(xp, ind_ub)
-    return ViewBasedUnreducedKKTVector{T, VT}(values, x, xp, xp_lr, xp_ur, xl, xzl, xzu)
-end
-
-MadNLP.full(rhs::ViewBasedUnreducedKKTVector) = rhs.values
-MadNLP.primal(rhs::ViewBasedUnreducedKKTVector) = rhs.xp
-MadNLP.dual(rhs::ViewBasedUnreducedKKTVector) = rhs.xl
-MadNLP.primal_dual(rhs::ViewBasedUnreducedKKTVector) = rhs.x
-MadNLP.dual_lb(rhs::ViewBasedUnreducedKKTVector) = rhs.xzl
-MadNLP.dual_ub(rhs::ViewBasedUnreducedKKTVector) = rhs.xzu

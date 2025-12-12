@@ -1,9 +1,9 @@
 import MadIPM: is_done, is_factorized
 
 function batch_factorize_system!(
-    batch_solver::MadIPM.BatchMPCSolver{T, MT, VT, VI, KKTSystem}
+    batch_solver::MadIPM.BatchMPCSolver{T, Ts, MT, VT, VI, KKTSystem}
 ) where {
-    T, MT, VT, VI,
+    T, Ts, MT, VT, VI,
     QN, VI32,
     LS <: MadNLPGPU.CUDSSSolver,
     KKTSystem <: Union{
@@ -22,8 +22,8 @@ function batch_factorize_system!(
             is_done(solver) && continue
             if !isone(ntrial)
                 is_factorized(solver.kkt.linear_solver) && continue
-                solver.del_w *= 100.0
-                solver.del_c *= 100.0
+                solver.del_w[] *= 100.0
+                solver.del_c[] *= 100.0
             end
             MadIPM.set_aug_diagonal_reg!(solver.kkt, solver)
         end

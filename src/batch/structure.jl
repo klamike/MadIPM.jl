@@ -1,125 +1,7 @@
 include("madnlp.jl")
 
-mutable struct ViewBasedMPCSolver{
-    # NOTE: this is only here because I don't want to mess with the non-batched version.
-    # eventually we can consider merging them into a single type.
-    T,
-    VT <: AbstractVector{T},
-    VI <: AbstractVector{Int},
-    KKTSystem <: MadNLP.AbstractKKTSystem{T},
-    Model <: NLPModels.AbstractNLPModel{T,VT},
-    CB <: MadNLP.AbstractCallback{T},
-} <: AbstractMPCSolver{T}
-    nlp::Model
-    class::AbstractConicProblem
-    cb::CB
-    kkt::KKTSystem
-
-    opt::IPMOptions
-    cnt::MadNLP.MadNLPCounters
-    logger::MadNLP.MadNLPLogger
-
-    n::Int
-    m::Int
-    nlb::Int
-    nub::Int
-
-    x::ViewBasedPrimalVector{T}
-    y::AbstractVector{T}
-    zl::ViewBasedPrimalVector{T}
-    zu::ViewBasedPrimalVector{T}
-    xl::ViewBasedPrimalVector{T}
-    xu::ViewBasedPrimalVector{T}
-
-    f::ViewBasedPrimalVector{T}
-    c::AbstractVector{T}
-
-    jacl::AbstractVector{T}
-
-    d::ViewBasedUnreducedKKTVector{T}
-    p::ViewBasedUnreducedKKTVector{T}
-
-    _w1::ViewBasedUnreducedKKTVector{T}
-    _w2::ViewBasedUnreducedKKTVector{T}
-
-    correction_lb::AbstractVector{T}
-    correction_ub::AbstractVector{T}
-    rhs::AbstractVector{T}
-    ind_ineq::VI
-    ind_fixed::VI
-    ind_lb::VI
-    ind_ub::VI
-    ind_llb::VI
-    ind_uub::VI
-
-    x_lr
-    x_ur
-    xl_r
-    xu_r
-    zl_r
-    zu_r
-    dx_lr
-    dx_ur
-
-    status::MadNLP.Status
-
-    _batch_solver
-    _batch_index::Int
-end
-
-############################################################################################
-#                                                                                          #
-#        very dumb {get/set}property override                                              #
-#   this is for any `T` fields. probably you can use Ref{T} instead,                       #
-#   but that would require modifying solver code.                                          #
-#                                                                                          #
-############################################################################################
-
-const _batch_delegated_fields = (:obj_val, :inf_pr, :inf_du, :inf_compl, :norm_b, :norm_c, 
-                                 :mu, :alpha_p, :alpha_d, :del_w, :del_c,
-                                 :best_complementarity, :mu_curr)
-for field in _batch_delegated_fields
-    @eval function Base.getproperty(solver::ViewBasedMPCSolver, ::Val{$(Meta.quot(field))})
-        batch_solver = getfield(solver, :_batch_solver)
-        if batch_solver !== nothing
-            i = getfield(solver, :_batch_index)
-            return getfield(batch_solver, $(Meta.quot(field)))[i]
-        end
-        return getfield(solver, $(Meta.quot(field)))
-    end
-end
-function Base.getproperty(solver::ViewBasedMPCSolver, name::Symbol)
-    if name in _batch_delegated_fields
-        return getproperty(solver, Val(name))
-    end
-    return getfield(solver, name)
-end
-for field in _batch_delegated_fields
-    @eval function Base.setproperty!(solver::ViewBasedMPCSolver, ::Val{$(Meta.quot(field))}, val)
-        batch_solver = getfield(solver, :_batch_solver)
-        if batch_solver !== nothing
-            i = getfield(solver, :_batch_index)
-            getfield(batch_solver, $(Meta.quot(field)))[i] = val
-            return val
-        end
-        return setfield!(solver, $(Meta.quot(field)), val)
-    end
-end
-function Base.setproperty!(solver::ViewBasedMPCSolver, name::Symbol, val)
-    if name in _batch_delegated_fields
-        return setproperty!(solver, Val(name), val)
-    end
-    return setfield!(solver, name, val)
-end
-
-############################################################################################
-#                                                                                          #
-#   end   very dumb {get/set}property !!!                                                  #
-#                                                                                          #
-############################################################################################
-
 mutable struct BatchMPCSolver{
-    T,
+    T, Ts,
     MT <: AbstractMatrix{T},
     VT <: AbstractVector{T},
     VI <: AbstractVector{Int},
@@ -129,30 +11,27 @@ mutable struct BatchMPCSolver{
 } <: MadNLP.AbstractMadNLPSolver{T}
     nlps::Vector{Model}
     batch_size::Int
-    solvers::Vector{ViewBasedMPCSolver{T, VT, VI, KKTSystem, Model, CB}}
-    
-    # Batch vectors
+    solvers::Vector{MPCSolver{T, Ts, VT, VI, KKTSystem, Model, CB}}
+
     x::BatchPrimalVector{T, MT, VT, VI}
     zl::BatchPrimalVector{T, MT, VT, VI}
     zu::BatchPrimalVector{T, MT, VT, VI}
     xl::BatchPrimalVector{T, MT, VT, VI}
     xu::BatchPrimalVector{T, MT, VT, VI}
     f::BatchPrimalVector{T, MT, VT, VI}
-    
+
     d::BatchUnreducedKKTVector{T, MT, VT, VI}
     p::BatchUnreducedKKTVector{T, MT, VT, VI}
     _w1::BatchUnreducedKKTVector{T, MT, VT, VI}
     _w2::BatchUnreducedKKTVector{T, MT, VT, VI}
-    
-    # Batch regular vectors (matrices, each column is one instance)
-    y::MT  # size (m, batch_size)
-    c::MT  # size (m, batch_size)
-    jacl::MT  # size (n, batch_size)
-    correction_lb::MT  # size (nlb, batch_size)
-    correction_ub::MT  # size (nub, batch_size)
-    rhs::MT  # size (m, batch_size)
-    
-    # Batch scalar vectors (one value per batch instance)
+
+    y::MT
+    c::MT
+    jacl::MT
+    correction_lb::MT
+    correction_ub::MT
+    rhs::MT
+
     obj_val::VT
     dobj_val::VT
     inf_pr::VT
@@ -168,31 +47,28 @@ mutable struct BatchMPCSolver{
     best_complementarity::VT
     mu_affine::VT
     mu_curr::VT
-    
-    # Shared across batch
+
     opt::IPMOptions
-    cnt::Vector{MadNLP.MadNLPCounters}
-    logger::Vector{MadNLP.MadNLPLogger}
+    cnt::MadNLP.MadNLPCounters  # FIXME
+    logger::MadNLP.MadNLPLogger
     kkt::Vector{KKTSystem}
     cb::Vector{CB}
     class::AbstractConicProblem
-    
-    # Dimensions
+
     n::Int
     m::Int
     nlb::Int
     nub::Int
     nx::Int
     ns::Int
-    
-    # Index sets (shared)
+
     ind_ineq::VI
     ind_fixed::VI
     ind_lb::VI
     ind_ub::VI
     ind_llb::VI
     ind_uub::VI
-    
+
     x_lr::SubArray{T, 2, MT, <:Tuple}
     x_ur::SubArray{T, 2, MT, <:Tuple}
     xl_r::SubArray{T, 2, MT, <:Tuple}
@@ -206,10 +82,6 @@ end
 Base.length(batch::BatchMPCSolver) = batch.batch_size
 Base.iterate(batch::BatchMPCSolver, i=1) = i > length(batch) ? nothing : (batch.solvers[i], i+1)
 Base.getindex(batch::BatchMPCSolver, i::Int) = batch.solvers[i]
-
-# FIXME vector type from matrix type?
-_infer_vector_type(::Type{Matrix{T}}) where T = Vector{T}
-_infer_vector_type(::Type{MT}) where {T, MT <: AbstractMatrix{T}} = Vector{T}  # Default fallback
 
 function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPModels.AbstractNLPModel{T}}
     batch_size = length(nlps)
@@ -225,7 +97,7 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
     
     # FIXME
     MT = Matrix{T}
-    VT = _infer_vector_type(MT)
+    VT = Vector{T}
     VI = Vector{Int}
     
     # shared
@@ -293,6 +165,7 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
     mu_affine_batch = VT(undef, batch_size)
     mu_curr_batch = VT(undef, batch_size)
     
+    bcnt = MadNLP.MadNLPCounters(start_time=time())
     cbs = [MadNLP.create_callback(MadNLP.SparseCallback, nlp; 
         fixed_variable_treatment=ipm_opt.fixed_variable_treatment,
         equality_treatment=ipm_opt.equality_treatment) for nlp in nlps]
@@ -303,38 +176,30 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
         ipm_opt.linear_solver;
         opt_linear_solver=options.linear_solver,
     ) for i in 1:batch_size]
-    cnts = [MadNLP.MadNLPCounters(start_time=time()) for _ in 1:batch_size]
-    loggers = [options.logger for _ in 1:batch_size]  # Could create separate loggers
     
-    solvers = Vector{ViewBasedMPCSolver{T, VT, VI, typeof(kkts[1]), Model, typeof(cbs[1])}}(undef, batch_size)
+    Ts = typeof(MadNLP._madnlp_unsafe_wrap(obj_val_batch, 1, 1))  # FIXME
+    solvers = Vector{MPCSolver{T, Ts, VT, VI, typeof(kkts[1]), Model, typeof(cbs[1])}}(undef, batch_size)
     for i in 1:batch_size
-        x_i = ViewBasedPrimalVector(_madnlp_unsafe_column_wrap(
-            x_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        zl_i = ViewBasedPrimalVector(_madnlp_unsafe_column_wrap(
-            zl_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        zu_i = ViewBasedPrimalVector(_madnlp_unsafe_column_wrap(
-            zu_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        xl_i = ViewBasedPrimalVector(_madnlp_unsafe_column_wrap(
-            xl_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        xu_i = ViewBasedPrimalVector(_madnlp_unsafe_column_wrap(
-            xu_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        f_i = ViewBasedPrimalVector(_madnlp_unsafe_column_wrap(
-            f_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        d_i = ViewBasedUnreducedKKTVector(_madnlp_unsafe_column_wrap(
-            d_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
-        p_i = ViewBasedUnreducedKKTVector(_madnlp_unsafe_column_wrap(
-            p_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
-        _w1_i = ViewBasedUnreducedKKTVector(_madnlp_unsafe_column_wrap(
-            _w1_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
-        _w2_i = ViewBasedUnreducedKKTVector(_madnlp_unsafe_column_wrap(
-            _w2_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
+        cnt = MadNLP.MadNLPCounters(start_time=time())
+        x_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(x_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
+        zl_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(zl_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
+        zu_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(zu_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
+        xl_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(xl_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
+        xu_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(xu_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
+        f_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(f_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
 
+        d_i = MadNLP.UnreducedKKTVector(_madnlp_unsafe_column_wrap(d_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
+        p_i = MadNLP.UnreducedKKTVector(_madnlp_unsafe_column_wrap(p_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
+        _w1_i = MadNLP.UnreducedKKTVector(_madnlp_unsafe_column_wrap(_w1_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
+        _w2_i = MadNLP.UnreducedKKTVector(_madnlp_unsafe_column_wrap(_w2_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
+
+        correction_lb_i = _madnlp_unsafe_column_wrap(correction_lb_batch, nlb, (i-1)*nlb + 1, VT)
+        correction_ub_i = _madnlp_unsafe_column_wrap(correction_ub_batch, nub, (i-1)*nub + 1, VT)
         y_i = _madnlp_unsafe_column_wrap(y_batch, m, (i-1)*m + 1, VT)
         c_i = _madnlp_unsafe_column_wrap(c_batch, m, (i-1)*m + 1, VT)
         jacl_i = _madnlp_unsafe_column_wrap(jacl_batch, n, (i-1)*n + 1, VT)
-        correction_lb_i = _madnlp_unsafe_column_wrap(correction_lb_batch, nlb, (i-1)*nlb + 1, VT)
-        correction_ub_i = _madnlp_unsafe_column_wrap(correction_ub_batch, nub, (i-1)*nub + 1, VT)
         rhs_i = _madnlp_unsafe_column_wrap(rhs_batch, m, (i-1)*m + 1, VT)
+
         x_lr_i = view(full(x_i), ind_cons.ind_lb)
         x_ur_i = view(full(x_i), ind_cons.ind_ub)
         xl_r_i = view(full(xl_i), ind_cons.ind_lb)
@@ -344,12 +209,28 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
         dx_lr_i = view(d_i.xp, ind_cons.ind_lb)
         dx_ur_i = view(d_i.xp, ind_cons.ind_ub)
         
-        solvers[i] = ViewBasedMPCSolver(
+        obj_val_i = MadNLP._madnlp_unsafe_wrap(obj_val_batch, 1, i)
+        inf_pr_i = MadNLP._madnlp_unsafe_wrap(inf_pr_batch, 1, i)
+        inf_du_i = MadNLP._madnlp_unsafe_wrap(inf_du_batch, 1, i)
+        inf_compl_i = MadNLP._madnlp_unsafe_wrap(inf_compl_batch, 1, i)
+        norm_b_i = MadNLP._madnlp_unsafe_wrap(norm_b_batch, 1, i)
+        norm_c_i = MadNLP._madnlp_unsafe_wrap(norm_c_batch, 1, i)
+        mu_i = MadNLP._madnlp_unsafe_wrap(mu_batch, 1, i)
+        alpha_p_i = MadNLP._madnlp_unsafe_wrap(alpha_p_batch, 1, i)
+        alpha_d_i = MadNLP._madnlp_unsafe_wrap(alpha_d_batch, 1, i)
+        del_w_i = MadNLP._madnlp_unsafe_wrap(del_w_batch, 1, i)
+        del_c_i = MadNLP._madnlp_unsafe_wrap(del_c_batch, 1, i)
+        best_complementarity_i = MadNLP._madnlp_unsafe_wrap(best_complementarity_batch, 1, i)
+        mu_curr_i = MadNLP._madnlp_unsafe_wrap(mu_curr_batch, 1, i)
+
+        cnt.init_time = time() - cnt.start_time
+
+        solvers[i] = MPCSolver(
             nlps[i], class, cbs[i], kkts[i],
-            ipm_opt, cnts[i], loggers[i],
+            ipm_opt, cnt, options.logger,
             n, m, nlb, nub,
             x_i, y_i, zl_i, zu_i, xl_i, xu_i,
-            f_i, c_i,
+            obj_val_i, f_i, c_i,
             jacl_i,
             d_i, p_i,
             _w1_i, _w2_i,
@@ -358,8 +239,8 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
             ind_cons.ind_ineq, ind_cons.ind_fixed, ind_cons.ind_llb, ind_cons.ind_uub,
             ind_cons.ind_lb, ind_cons.ind_ub,
             x_lr_i, x_ur_i, xl_r_i, xu_r_i, zl_r_i, zu_r_i, dx_lr_i, dx_ur_i,
+            inf_pr_i, inf_du_i, inf_compl_i, norm_b_i, norm_c_i, mu_i, alpha_p_i, alpha_d_i, del_w_i, del_c_i, best_complementarity_i, mu_curr_i,
             MadNLP.INITIAL,
-            nothing, 0,  # Will set batch reference after construction
         )
     end
     
@@ -380,16 +261,14 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
         obj_val_batch, dobj_val_batch, inf_pr_batch, inf_du_batch, inf_compl_batch, norm_b_batch, norm_c_batch,
         mu_batch, alpha_p_batch, alpha_d_batch, del_w_batch, del_c_batch,
         best_complementarity_batch, mu_affine_batch, mu_curr_batch,
-        ipm_opt, cnts, loggers, kkts, cbs, class,
+        ipm_opt, bcnt, options.logger, kkts, cbs, class,
         n, m, nlb, nub, nx, ns,
         ind_cons.ind_ineq, ind_cons.ind_fixed, ind_cons.ind_lb, ind_cons.ind_ub,
         ind_cons.ind_llb, ind_cons.ind_uub,
         x_lr_batch, x_ur_batch, xl_r_batch, xu_r_batch, zl_r_batch, zu_r_batch, dx_lr_batch, dx_ur_batch,
     )
-    for i in 1:batch_size
-        setfield!(solvers[i], :_batch_solver, batch)
-        setfield!(solvers[i], :_batch_index, i)
-    end
-    
+
+    bcnt.init_time = time() - bcnt.start_time
+
     return batch
 end

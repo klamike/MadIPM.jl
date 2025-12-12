@@ -1,7 +1,7 @@
 abstract type AbstractMPCSolver{T} <: MadNLP.AbstractMadNLPSolver{T} end
 
 mutable struct MPCSolver{
-    T,
+    T, Ts,
     VT <: AbstractVector{T},
     VI <: AbstractVector{Int},
     KKTSystem <: MadNLP.AbstractKKTSystem{T},
@@ -22,15 +22,15 @@ mutable struct MPCSolver{
     nlb::Int
     nub::Int
 
-    x::MadNLP.PrimalVector{T, VT, VI} # primal (after reformulation)
+    x::MadNLP.PrimalVector{T} # primal (after reformulation)
     y::VT # dual
-    zl::MadNLP.PrimalVector{T, VT, VI} # dual (after reformulation)
-    zu::MadNLP.PrimalVector{T, VT, VI} # dual (after reformulation)
-    xl::MadNLP.PrimalVector{T, VT, VI} # primal lower bound (after reformulation)
-    xu::MadNLP.PrimalVector{T, VT, VI} # primal upper bound (after reformulation)
+    zl::MadNLP.PrimalVector{T} # dual (after reformulation)
+    zu::MadNLP.PrimalVector{T} # dual (after reformulation)
+    xl::MadNLP.PrimalVector{T} # primal lower bound (after reformulation)
+    xu::MadNLP.PrimalVector{T} # primal upper bound (after reformulation)
 
-    obj_val::T
-    f::MadNLP.PrimalVector{T, VT, VI}
+    obj_val::Ts
+    f::MadNLP.PrimalVector{T}
     c::VT
 
     jacl::VT
@@ -61,20 +61,20 @@ mutable struct MPCSolver{
     dx_lr::MadNLP.SubVector{T,VT,VI}
     dx_ur::MadNLP.SubVector{T,VT,VI}
 
-    inf_pr::T
-    inf_du::T
-    inf_compl::T
-    norm_b::T
-    norm_c::T
+    inf_pr::Ts
+    inf_du::Ts
+    inf_compl::Ts
+    norm_b::Ts
+    norm_c::Ts
 
-    mu::T
+    mu::Ts
 
-    alpha_p::T
-    alpha_d::T
-    del_w::T
-    del_c::T
-    best_complementarity::T
-    mu_curr::T
+    alpha_p::Ts
+    alpha_d::Ts
+    del_w::Ts
+    del_c::Ts
+    best_complementarity::Ts
+    mu_curr::Ts
     status::MadNLP.Status
 end
 
@@ -165,7 +165,7 @@ function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, V
         ipm_opt, cnt, options.logger,
         n, m, nlb, nub,
         x, y, zl, zu, xl, xu,
-        zero(T), f, c,
+        Ref(zero(T)), f, c,
         jacl,
         d, p,
         _w1, _w2,
@@ -174,7 +174,7 @@ function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, V
         ind_cons.ind_ineq, ind_cons.ind_fixed, ind_cons.ind_llb, ind_cons.ind_uub,
         ind_cons.ind_lb, ind_cons.ind_ub,
         x_lr, x_ur, xl_r, xu_r, zl_r, zu_r, dx_lr, dx_ur,
-        zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), typemax(T), zero(T),
+        Ref(zero(T)), Ref(zero(T)), Ref(zero(T)), Ref(zero(T)), Ref(zero(T)), Ref(zero(T)), Ref(zero(T)), Ref(zero(T)), Ref(zero(T)), Ref(zero(T)), Ref(typemax(T)), Ref(zero(T)),
         MadNLP.INITIAL,
     )
 end
@@ -183,19 +183,57 @@ function MadNLP.print_iter(solver::AbstractMPCSolver; options...)
     obj_scale = solver.cb.obj_scale[]
     mod(solver.cnt.k,10)==0&& MadNLP.@info(solver.logger,@sprintf(
         "iter    objective    inf_pr   inf_du lg(mu)  ||d||  lg(rg) alpha_du alpha_pr"))
-    inf_du = solver.inf_du
-    inf_pr = solver.inf_pr
-    mu = log10(solver.mu)
+    inf_du = solver.inf_du[]
+    inf_pr = solver.inf_pr[]
+    mu = log10(solver.mu[])
     MadNLP.@info(solver.logger,Printf.@sprintf(
         "%4i%s% 10.7e %6.2e %6.2e %5.1f %6.2e %s %6.2e %6.2e",
         solver.cnt.k,
         " ",
-        solver.obj_val/obj_scale,
+        solver.obj_val[]/obj_scale,
         inf_pr, inf_du, mu,
         solver.cnt.k == 0 ? 0. : norm(MadNLP.primal(solver.d),Inf),
-        solver.del_w == 0 ? "   - " : @sprintf("%5.1f",log(10,solver.del_w)),
-        solver.alpha_d,solver.alpha_p))
+        solver.del_w[] == 0 ? "   - " : @sprintf("%5.1f",log(10,solver.del_w[])),
+        solver.alpha_d[],solver.alpha_p[]))
     return
+end
+
+MadNLP.MadNLPExecutionStats(solver::AbstractMPCSolver) =MadNLP.MadNLPExecutionStats(
+    solver.opt,
+    solver.status,
+    MadNLP.primal(solver.x)[1:NLPModels.get_nvar(solver.nlp)],
+    solver.cb.obj_sign * solver.obj_val[] / solver.cb.obj_scale[],
+    solver.c ./ solver.cb.con_scale,
+    solver.inf_du[],
+    solver.inf_pr[],
+    copy(solver.y),
+    MadNLP.primal(solver.zl)[1:NLPModels.get_nvar(solver.nlp)],
+    MadNLP.primal(solver.zu)[1:NLPModels.get_nvar(solver.nlp)],
+    0,
+    solver.cnt,
+)
+
+function MadNLP.update!(stats::MadNLP.MadNLPExecutionStats, solver::AbstractMPCSolver)
+    stats.status = solver.status
+    stats.solution .= @view(MadNLP.primal(solver.x)[1:NLPModels.get_nvar(solver.nlp)])
+    stats.multipliers .= (solver.y .* solver.cb.con_scale) ./ solver.cb.obj_scale[]
+    stats.multipliers_L .= @view(MadNLP.primal(solver.zl)[1:NLPModels.get_nvar(solver.nlp)]) ./ solver.cb.obj_scale[]
+    stats.multipliers_U .= @view(MadNLP.primal(solver.zu)[1:NLPModels.get_nvar(solver.nlp)]) ./ solver.cb.obj_scale[]
+    # stats.solution .= min.(
+    #     max.(
+    #         @view(primal(solver.x)[1:get_nvar(solver.nlp)]),
+    #         get_lvar(solver.nlp)
+    #     ),
+    #     get_uvar(solver.nlp)
+    # )
+    stats.objective = solver.cb.obj_sign * solver.obj_val[] / solver.cb.obj_scale[]
+    stats.constraints .= solver.c ./ solver.cb.con_scale .+ solver.rhs
+    stats.constraints[solver.ind_ineq] .+= MadNLP.slack(solver.x)
+    stats.dual_feas = solver.inf_du[]
+    stats.primal_feas = solver.inf_pr[]
+    MadNLP.update_z!(solver.cb, stats.multipliers_L, stats.multipliers_U, solver.jacl)
+    stats.iter = solver.cnt.k
+    return stats
 end
 
 include("batch/structure.jl")
