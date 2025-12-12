@@ -17,9 +17,9 @@ function factorize_regularized_system!(solver)
 end
 
 function solve_system!(
-    d::MadNLP.UnreducedKKTVector{T},
+    d::MadNLP.AbstractUnreducedKKTVector{T},
     solver::MadNLP.AbstractMadNLPSolver{T},
-    p::MadNLP.UnreducedKKTVector{T},
+    p::MadNLP.AbstractUnreducedKKTVector{T},
 ) where T
     opt = solver.opt
     copyto!(MadNLP.full(d), MadNLP.full(p))
