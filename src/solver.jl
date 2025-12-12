@@ -334,31 +334,35 @@ function mpc!(solver::AbstractMPCSolver)
         MadNLP.print_iter(solver)
         update_termination_criteria!(solver)
         is_done(solver) && return
-
-        # Factorize KKT system
-        factorize_system!(solver)
-
-        # Affine direction
-        affine_direction!(solver)
-
-        # Prediction step size
-        prediction_step_size!(solver)
-
-        # Mehrotra's Correction direction
-        mehrotra_correction_direction!(solver)
-
-        # Gondzio's additional correction direction
-        gondzio_correction_direction!(solver)
-
-        # Update step size
-        update_step_size!(solver)
-
-        # Apply step
-        apply_step!(solver)
-
-        # Evaluate model at new iterate
-        evaluate_model!(solver)
+        
+        # Run an iteration
+        mpc_step!(solver)
     end
+end
+function mpc_step!(solver::AbstractMPCSolver)
+    # Factorize KKT system
+    factorize_system!(solver)
+
+    # Affine direction
+    affine_direction!(solver)
+
+    # Prediction step size
+    prediction_step_size!(solver)
+
+    # Mehrotra's Correction direction
+    mehrotra_correction_direction!(solver)
+
+    # Gondzio's additional correction direction
+    gondzio_correction_direction!(solver)
+
+    # Update step size
+    update_step_size!(solver)
+
+    # Apply step
+    apply_step!(solver)
+
+    # Evaluate model at new iterate
+    evaluate_model!(solver)
 end
 
 function solve!(
