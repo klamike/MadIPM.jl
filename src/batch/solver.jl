@@ -1,3 +1,5 @@
+include("special.jl")
+
 function batch_evaluate_model!(batch_solver)
     for solver in batch_solver
         is_done(solver) && continue
