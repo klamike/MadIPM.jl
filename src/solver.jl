@@ -227,8 +227,7 @@ function affine_direction!(solver::MadNLP.AbstractMadNLPSolver)
     return
 end
 
-function prediction_step!(solver::MadNLP.AbstractMadNLPSolver)
-    affine_direction!(solver)
+function prediction_step_size!(solver::MadNLP.AbstractMadNLPSolver)
     alpha_aff_p, alpha_aff_d = get_fraction_to_boundary_step(solver, 1.0)
     mu_affine = get_affine_complementarity_measure(solver, alpha_aff_p, alpha_aff_d)
     get_correction!(solver, solver.correction_lb, solver.correction_ub)
@@ -329,7 +328,7 @@ function is_done(solver)
 end
 
 # Predictor-corrector method
-function mpc!(solver::MadNLP.AbstractMadNLPSolver)
+function mpc!(solver::AbstractMPCSolver)
     while true
         # Check termination criteria
         MadNLP.print_iter(solver)
@@ -339,13 +338,16 @@ function mpc!(solver::MadNLP.AbstractMadNLPSolver)
         # Factorize KKT system
         factorize_system!(solver)
 
-        # Prediction step
-        prediction_step!(solver)
+        # Affine direction
+        affine_direction!(solver)
 
-        # Mehrotra's Correction step
+        # Prediction step size
+        prediction_step_size!(solver)
+
+        # Mehrotra's Correction direction
         mehrotra_correction_direction!(solver)
 
-        # Gondzio's additional correction
+        # Gondzio's additional correction direction
         gondzio_correction_direction!(solver)
 
         # Update step size

@@ -21,10 +21,17 @@ function batch_factorize_system!(batch_solver)
     end
     return
 end
-function batch_prediction_step!(batch_solver)
+function batch_affine_direction!(batch_solver)
     for solver in batch_solver
         is_done(solver) && continue
-        prediction_step!(solver)
+        affine_direction!(solver)
+    end
+    return
+end
+function batch_prediction_step_size!(batch_solver)
+    for solver in batch_solver
+        is_done(solver) && continue
+        prediction_step_size!(solver)
     end
     return
 end
@@ -67,13 +74,16 @@ function batch_mpc!(batch_solver)
         # Factorize KKT system
         batch_factorize_system!(batch_solver)
 
-        # Prediction step
-        batch_prediction_step!(batch_solver)
+        # Affine direction
+        batch_affine_direction!(batch_solver)
 
-        # Mehrotra's Correction step
+        # Prediction step size
+        batch_prediction_step_size!(batch_solver)
+
+        # Mehrotra's Correction direction
         batch_mehrotra_correction_direction!(batch_solver)
 
-        # Gondzio's additional correction
+        # Gondzio's additional correction direction
         batch_gondzio_correction_direction!(batch_solver)
 
         # Update step size
