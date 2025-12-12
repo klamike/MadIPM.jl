@@ -131,3 +131,37 @@ MadNLP.dual_lb(buktv::BatchUnreducedKKTVector) = buktv.dual_lb_view
 MadNLP.dual_lb(buktv::BatchUnreducedKKTVector, i::Int) = buktv.xzl[i]
 MadNLP.dual_ub(buktv::BatchUnreducedKKTVector) = buktv.dual_ub_view
 MadNLP.dual_ub(buktv::BatchUnreducedKKTVector, i::Int) = buktv.xzu[i]
+
+function MadNLP.print_summary(solver::AbstractMPCSolver)
+    # TODO inquire this from nlpmodel wrapper
+    obj_scale = solver.cb.obj_scale[]
+    solver.cnt.solver_time = solver.cnt.total_time-solver.cnt.linear_solver_time-solver.cnt.eval_function_time
+
+    MadNLP.@notice(solver.logger,"")
+    MadNLP.@notice(solver.logger,"Number of Iterations....: $(solver.cnt.k)\n")
+    MadNLP.@notice(solver.logger,"                                   (scaled)                 (unscaled)")
+    MadNLP.@notice(solver.logger,@sprintf("Objective...............:  % 1.16e   % 1.16e",solver.obj_val[],solver.obj_val[]/obj_scale))
+    MadNLP.@notice(solver.logger,@sprintf("Dual infeasibility......:   %1.16e    %1.16e",solver.inf_du[],solver.inf_du[]/obj_scale))
+    MadNLP.@notice(solver.logger,@sprintf("Constraint violation....:   %1.16e    %1.16e",norm(solver.c,Inf),solver.inf_pr[]))
+    MadNLP.@notice(solver.logger,@sprintf("Complementarity.........:   %1.16e    %1.16e",
+                                solver.inf_compl[]*obj_scale,solver.inf_compl[]))
+    MadNLP.@notice(solver.logger,@sprintf("Overall NLP error.......:   %1.16e    %1.16e\n",
+                                max(solver.inf_du[]*obj_scale,norm(solver.c,Inf),solver.inf_compl[]),
+                                max(solver.inf_du[],solver.inf_pr[],solver.inf_compl[])))
+
+    MadNLP.@notice(solver.logger,"Number of objective function evaluations              = $(solver.cnt.obj_cnt)")
+    MadNLP.@notice(solver.logger,"Number of objective gradient evaluations              = $(solver.cnt.obj_grad_cnt)")
+    MadNLP.@notice(solver.logger,"Number of constraint evaluations                      = $(solver.cnt.con_cnt)")
+    MadNLP.@notice(solver.logger,"Number of constraint Jacobian evaluations             = $(solver.cnt.con_jac_cnt)")
+    MadNLP.@notice(solver.logger,"Number of Lagrangian Hessian evaluations              = $(solver.cnt.lag_hess_cnt)\n")
+    MadNLP.@notice(solver.logger,@sprintf("Total wall secs in initialization                     = %6.3f",
+                                solver.cnt.init_time))
+    MadNLP.@notice(solver.logger,@sprintf("Total wall secs in linear solver                      = %6.3f",
+                                solver.cnt.linear_solver_time))
+    MadNLP.@notice(solver.logger,@sprintf("Total wall secs in NLP function evaluations           = %6.3f",
+                                solver.cnt.eval_function_time))
+    MadNLP.@notice(solver.logger,@sprintf("Total wall secs in solver (w/o init./fun./lin. alg.)  = %6.3f",
+                                solver.cnt.total_time - solver.cnt.init_time - solver.cnt.linear_solver_time - solver.cnt.eval_function_time))
+    MadNLP.@notice(solver.logger,@sprintf("Total wall secs                                       = %6.3f\n",
+                                solver.cnt.total_time))
+end

@@ -32,8 +32,8 @@ function batch_mehrotra_correction_direction!(batch_solver::BatchMPCSolver)
         is_done(solver) && continue
         _presolve_system!(solver.d, solver, solver.p)
     end
-
-    # TODO: MadNLP.solve!(::BatchKKTSystem{LS<:CUDSSSolver}, ::CuMatrix)
+    
+    # TODO: MadNLP.solve!(::BatchKKTSystem, ::BatchUnreducedKKTVector)
     for solver in batch_solver
         is_done(solver) && continue
         MadNLP.solve!(solver.kkt, solver.d)

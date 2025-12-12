@@ -202,7 +202,7 @@ MadNLP.MadNLPExecutionStats(solver::AbstractMPCSolver) =MadNLP.MadNLPExecutionSt
     solver.opt,
     solver.status,
     MadNLP.primal(solver.x)[1:NLPModels.get_nvar(solver.nlp)],
-    solver.cb.obj_sign * solver.obj_val[] / solver.cb.obj_scale[],
+    solver.cb.obj_sign[] * solver.obj_val[] / solver.cb.obj_scale[],
     solver.c ./ solver.cb.con_scale,
     solver.inf_du[],
     solver.inf_pr[],
@@ -226,7 +226,7 @@ function MadNLP.update!(stats::MadNLP.MadNLPExecutionStats, solver::AbstractMPCS
     #     ),
     #     get_uvar(solver.nlp)
     # )
-    stats.objective = solver.cb.obj_sign * solver.obj_val[] / solver.cb.obj_scale[]
+    stats.objective = solver.cb.obj_sign[] * solver.obj_val[] / solver.cb.obj_scale[]
     stats.constraints .= solver.c ./ solver.cb.con_scale .+ solver.rhs
     stats.constraints[solver.ind_ineq] .+= MadNLP.slack(solver.x)
     stats.dual_feas = solver.inf_du[]

@@ -28,13 +28,13 @@ end
 
 function MadNLP.create_kkt_system(
     ::Type{NormalKKTSystem},
-    cb::MadNLP.SparseCallback{T,VT},
+    cb::MadNLP.SparseCallback{T,Ts,VT},
     ind_cons,
     linear_solver::Type;
     opt_linear_solver=MadNLP.default_options(linear_solver),
     hessian_approximation=MadNLP.ExactHessian,
     qn_options=MadNLP.QuasiNewtonOptions(),
-) where {T,VT}
+) where {T,Ts,VT}
     n = cb.nvar
     m = cb.ncon
     ind_ineq = ind_cons.ind_ineq
