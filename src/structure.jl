@@ -1,3 +1,5 @@
+abstract type AbstractMPCSolver{T} <: MadNLP.AbstractMadNLPSolver{T} end
+
 mutable struct MPCSolver{
     T,
     VT <: AbstractVector{T},
@@ -5,7 +7,7 @@ mutable struct MPCSolver{
     KKTSystem <: MadNLP.AbstractKKTSystem{T},
     Model <: NLPModels.AbstractNLPModel{T,VT},
     CB <: MadNLP.AbstractCallback{T},
-} <: MadNLP.AbstractMadNLPSolver{T}
+} <: AbstractMPCSolver{T}
     nlp::Model
     class::AbstractConicProblem
     cb::CB
@@ -177,7 +179,7 @@ function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, V
     )
 end
 
-function MadNLP.print_iter(solver::MPCSolver; options...)
+function MadNLP.print_iter(solver::AbstractMPCSolver; options...)
     obj_scale = solver.cb.obj_scale[]
     mod(solver.cnt.k,10)==0&& MadNLP.@info(solver.logger,@sprintf(
         "iter    objective    inf_pr   inf_du lg(mu)  ||d||  lg(rg) alpha_du alpha_pr"))
@@ -196,3 +198,4 @@ function MadNLP.print_iter(solver::MPCSolver; options...)
     return
 end
 
+include("batch/structure.jl")

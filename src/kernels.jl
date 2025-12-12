@@ -361,37 +361,37 @@ end
     Regularization
 =#
 
-function init_regularization!(solver::MPCSolver, ::NoRegularization)
+function init_regularization!(solver::AbstractMPCSolver, ::NoRegularization)
     solver.del_w = 1.0
     solver.del_c = 0.0
     return
 end
 
-function update_regularization!(solver::MPCSolver, ::NoRegularization)
+function update_regularization!(solver::AbstractMPCSolver, ::NoRegularization)
     solver.del_w = 0.0
     solver.del_c = 0.0
     return
 end
 
-function init_regularization!(solver::MPCSolver, reg::FixedRegularization)
+function init_regularization!(solver::AbstractMPCSolver, reg::FixedRegularization)
     solver.del_w = 1.0
     solver.del_c = reg.delta_d
     return
 end
 
-function update_regularization!(solver::MPCSolver, reg::FixedRegularization)
+function update_regularization!(solver::AbstractMPCSolver, reg::FixedRegularization)
     solver.del_w = reg.delta_p
     solver.del_c = reg.delta_d
     return
 end
 
-function init_regularization!(solver::MPCSolver, reg::AdaptiveRegularization)
+function init_regularization!(solver::AbstractMPCSolver, reg::AdaptiveRegularization)
     solver.del_w = 1.0
     solver.del_c = reg.delta_d
     return
 end
 
-function update_regularization!(solver::MPCSolver, reg::AdaptiveRegularization)
+function update_regularization!(solver::AbstractMPCSolver, reg::AdaptiveRegularization)
     reg.delta_p = max(reg.delta_p / 10.0, reg.delta_min)
     # Dual regularization is negative!
     reg.delta_d = min(reg.delta_d / 10.0, -reg.delta_min)
@@ -405,7 +405,7 @@ end
 =#
 
 # Dual objective
-function dual_objective(solver::MPCSolver)
+function dual_objective(solver::AbstractMPCSolver)
     dobj = -dot(solver.y, solver.rhs)
     if length(solver.xl_r) > 0
         dobj += dot(solver.zl_r, solver.xl_r)
@@ -416,7 +416,7 @@ function dual_objective(solver::MPCSolver)
     return dobj
 end
 
-function get_optimality_gap(solver::MPCSolver)
+function get_optimality_gap(solver::AbstractMPCSolver)
     return MadNLP.get_inf_compl(
         solver.x_lr,
         solver.xl_r,
