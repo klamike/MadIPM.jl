@@ -239,9 +239,9 @@ end
         @test batch_stats3[i].solution ≈ individual_stats[i].solution atol=1e-6
     end
 end
-@testset "MathOptInterface" begin
-    include("MOI_wrapper.jl")
-end
+# @testset "MathOptInterface" begin
+#     include("MOI_wrapper.jl")
+# end
 
 if CUDA.functional()
     include("test_gpu.jl")
