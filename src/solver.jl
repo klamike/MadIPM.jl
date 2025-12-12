@@ -426,3 +426,5 @@ function madipm(m; kwargs...)
     solver = MadIPM.MPCSolver(m; kwargs...)
     return MadIPM.solve!(solver)
 end
+
+include("batch/solver.jl")

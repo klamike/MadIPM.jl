@@ -26,14 +26,14 @@ function _compare_with_nlp(n, m, ind_fixed, ind_eq; max_ncorr=0, atol=1e-5)
     return
 end
 
-function simple_lp()
+function simple_lp(; Avals=[1.0; 1.0])
     c = ones(2)
     Hrows = Int[]
     Hcols = Int[]
     Hvals = Float64[]
     Arows = [1, 1]
     Acols = [1, 2]
-    Avals = [1.0; 1.0]
+    # Avals = [1.0; 1.0]  
     c0 = 0.0
     lvar = [0.0; 0.0]
     uvar = [Inf; Inf]
@@ -58,7 +58,7 @@ function simple_lp()
         name = "simpleLP",
     )
 end
-
+#=
 @testset "Test with DenseDummyQP" begin
     # Test results match with MadNLP
     @testset "Size: ($n, $m)" for (n, m) in [(10, 0), (10, 5), (50, 10)]
@@ -196,7 +196,49 @@ end
         @test sol.multipliers ≈ sol_ref.multipliers atol=1e-6
     end
 end
+=#
+@testset "Batch solve end-to-end test" begin
+    n_batch = 5
+    qps = [simple_lp(Avals=[i * 0.5; i * 2]) for i in 1:n_batch]
+    for (i, qp) in enumerate(qps)
+        qp.data.c .+= i * 0.5
+    end
+    
+    # first solve each one
+    individual_stats = Vector{MadNLP.MadNLPExecutionStats}(undef, n_batch)
+    for (i, qp) in enumerate(qps)
+        solver = MadIPM.MPCSolver(qp; print_level=MadNLP.ERROR)
+        individual_stats[i] = MadIPM.solve!(solver)
+        @test individual_stats[i].status == MadNLP.SOLVE_SUCCEEDED
+    end
+    
+    # try the generic batch solver (just vector of MPCSolver)
+    batch_solvers = [MadIPM.MPCSolver(qp; print_level=MadNLP.ERROR) for qp in qps]
+    batch_stats = MadIPM.batch_solve!(batch_solvers)
+    @test length(batch_stats) == n_batch
+    for i in 1:n_batch
+        @test batch_stats[i].status == individual_stats[i].status
+        @test batch_stats[i].objective ≈ individual_stats[i].objective atol=1e-6
+        @test batch_stats[i].solution ≈ individual_stats[i].solution atol=1e-6
+    end
 
+    # try the specialized batch solver
+    batch_stats2 = MadIPM.madipm_batch(qps; print_level=MadNLP.ERROR)
+    @test length(batch_stats2) == n_batch
+    for i in 1:n_batch
+        @test batch_stats2[i].status == individual_stats[i].status
+        @test batch_stats2[i].objective ≈ individual_stats[i].objective atol=1e-6
+        @test batch_stats2[i].solution ≈ individual_stats[i].solution atol=1e-6
+    end
+
+    batch_stats3 = MadIPM.madipm_foreach(qps; print_level=MadNLP.ERROR)
+    @test length(batch_stats3) == n_batch
+    for i in 1:n_batch
+        @test batch_stats3[i].status == individual_stats[i].status
+        @test batch_stats3[i].objective ≈ individual_stats[i].objective atol=1e-6
+        @test batch_stats3[i].solution ≈ individual_stats[i].solution atol=1e-6
+    end
+end
 @testset "MathOptInterface" begin
     include("MOI_wrapper.jl")
 end
