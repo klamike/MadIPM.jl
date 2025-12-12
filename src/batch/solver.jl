@@ -131,11 +131,8 @@ function batch_solve!(
         for solver in batch_solver
             MadNLP.@notice(solver.logger,"This is MadIPM, running with $(MadNLP.introduce(solver.kkt.linear_solver))\n")
         end
-        # batch_initialize!(batch_solver)
-        for solver in batch_solver
-            initialize!(solver)
-            mpc!(solver)
-        end
+        batch_initialize!(batch_solver)
+        batch_mpc!(batch_solver)
     catch e
         rethrow(e)  # FIXME
     finally
