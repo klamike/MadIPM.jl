@@ -140,7 +140,6 @@ function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, V
     correction_lb = VT(undef, nlb)
     correction_ub = VT(undef, nub)
     jacl = VT(undef,n)
-    c_trial = VT(undef, m)
     y = VT(undef, m)
     c = VT(undef, m)
     rhs = VT(undef, m)
