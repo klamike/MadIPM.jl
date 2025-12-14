@@ -65,6 +65,7 @@ struct BatchUnreducedKKTVector{T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}, 
     primal_dual_view::SubArray{T, 2, MT, <:Tuple}
     dual_lb_view::SubArray{T, 2, MT, <:Tuple}
     dual_ub_view::SubArray{T, 2, MT, <:Tuple}
+    primal_dual_buffer::VT
     batch_size::Int
     n::Int
     m::Int
@@ -105,11 +106,15 @@ function BatchUnreducedKKTVector(
     primal_dual_view = view(values, 1:(n+m), :)
     dual_lb_view = view(values, (n+m+1):(n+m+nlb), :)
     dual_ub_view = view(values, (n+m+nlb+1):(n+m+nlb+nub), :)
-    
+
+    primal_dual_buffer = VT(undef, (n+m) * batch_size)
+    fill!(primal_dual_buffer, zero(T))
+
     return BatchUnreducedKKTVector(
         values, x_views, xp_views, xp_lr_views, xp_ur_views,
         xl_views, xzl_views, xzu_views, full_views,
         primal_view, dual_view, primal_dual_view, dual_lb_view, dual_ub_view,
+        primal_dual_buffer,
         batch_size, n, m, nlb, nub
     )
 end
