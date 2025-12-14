@@ -17,6 +17,5 @@ include("linear_solver.jl")
 include("solver.jl")
 
 export MPCSolver, madipm
-export BatchMPCSolver, madipm_batch
 
 end # module MadIPM

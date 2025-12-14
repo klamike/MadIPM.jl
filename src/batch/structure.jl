@@ -1,14 +1,19 @@
-include("madnlp.jl")
+include("madnlp_rhs.jl")
+include("madnlp_cb.jl")
+include("madnlp_kkt.jl")
 
-mutable struct BatchMPCSolver{
+abstract type AbstractBatchMPCSolver{T} end
+
+mutable struct SameStructureBatchMPCSolver{
     T, Ts,
     MT <: AbstractMatrix{T},
     VT <: AbstractVector{T},
     VI <: AbstractVector{Int},
-    KKTSystem <: MadNLP.AbstractKKTSystem{T},
+    KKTSystem <: MadNLP.AbstractKKTSystem,
+    BK <: AbstractBatchKKTSystem{T, KKTSystem},
     Model <: NLPModels.AbstractNLPModel{T,VT},
     CB <: MadNLP.AbstractCallback{T},
-} <: MadNLP.AbstractMadNLPSolver{T}
+} <: AbstractBatchMPCSolver{T}
     nlps::Vector{Model}
     batch_size::Int
     solvers::Vector{MPCSolver{T, Ts, VT, VI, KKTSystem, Model, CB}}
@@ -51,8 +56,8 @@ mutable struct BatchMPCSolver{
     opt::IPMOptions
     cnt::MadNLP.MadNLPCounters  # FIXME
     logger::MadNLP.MadNLPLogger
-    kkt::Vector{KKTSystem}
-    cb::Vector{CB}
+    kkts::BK
+    cbs::AbstractBatchCallback{CB}
     class::AbstractConicProblem
 
     n::Int
@@ -79,11 +84,11 @@ mutable struct BatchMPCSolver{
     dx_ur::SubArray{T, 2, MT, <:Tuple}
 end
 
-Base.length(batch::BatchMPCSolver) = batch.batch_size
-Base.iterate(batch::BatchMPCSolver, i=1) = i > length(batch) ? nothing : (batch.solvers[i], i+1)
-Base.getindex(batch::BatchMPCSolver, i::Int) = batch.solvers[i]
+Base.length(batch::SameStructureBatchMPCSolver) = batch.batch_size
+Base.iterate(batch::SameStructureBatchMPCSolver, i=1) = i > length(batch) ? nothing : (batch.solvers[i], i+1)
+Base.getindex(batch::SameStructureBatchMPCSolver, i::Int) = batch.solvers[i]
 
-function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPModels.AbstractNLPModel{T}}
+function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPModels.AbstractNLPModel{T}}
     batch_size = length(nlps)
     batch_size == 0 && error("BatchMPCSolver requires at least one model")
     
@@ -166,19 +171,21 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
     mu_curr_batch = VT(undef, batch_size)
     
     bcnt = MadNLP.MadNLPCounters(start_time=time())
-    cbs = [MadNLP.create_callback(MadNLP.SparseCallback, nlp; 
+    batch_cb = SparseBatchCallback(MT, VT, VI, nlps;
         fixed_variable_treatment=ipm_opt.fixed_variable_treatment,
-        equality_treatment=ipm_opt.equality_treatment) for nlp in nlps]
-    kkts = [MadNLP.create_kkt_system(  # FIXME: detect shared structure here?
+        equality_treatment=ipm_opt.equality_treatment,
+        shared=(:jac_I, :jac_J, :hess_I, :hess_J),
+    )
+    batch_kkt = SparseSameStructureBatchKKTSystem(
         ipm_opt.kkt_system,
-        cbs[i],
+        batch_cb,
         ind_cons,
         ipm_opt.linear_solver;
         opt_linear_solver=options.linear_solver,
-    ) for i in 1:batch_size]
+    )
     
     Ts = typeof(MadNLP._madnlp_unsafe_wrap(obj_val_batch, 1, 1))  # FIXME
-    solvers = Vector{MPCSolver{T, Ts, VT, VI, typeof(kkts[1]), Model, typeof(cbs[1])}}(undef, batch_size)
+    solvers = Vector{MPCSolver{T, Ts, VT, VI, typeof(batch_kkt.kkts[1]), Model, typeof(batch_cb.callbacks[1])}}(undef, batch_size)
     for i in 1:batch_size
         cnt = MadNLP.MadNLPCounters(start_time=time())
         x_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(x_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
@@ -226,7 +233,7 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
         cnt.init_time = time() - cnt.start_time
 
         solvers[i] = MPCSolver(
-            nlps[i], class, cbs[i], kkts[i],
+            nlps[i], class, batch_cb.callbacks[i], batch_kkt.kkts[i],
             ipm_opt, cnt, options.logger,
             n, m, nlb, nub,
             x_i, y_i, zl_i, zu_i, xl_i, xu_i,
@@ -253,7 +260,7 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
     dx_lr_batch = view(d_batch.values, ind_lb, :)
     dx_ur_batch = view(d_batch.values, ind_ub, :)
     
-    batch = BatchMPCSolver(
+    batch = SameStructureBatchMPCSolver(
         nlps, batch_size, solvers,
         x_batch, zl_batch, zu_batch, xl_batch, xu_batch, f_batch,
         d_batch, p_batch, _w1_batch, _w2_batch,
@@ -261,7 +268,7 @@ function BatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPMo
         obj_val_batch, dobj_val_batch, inf_pr_batch, inf_du_batch, inf_compl_batch, norm_b_batch, norm_c_batch,
         mu_batch, alpha_p_batch, alpha_d_batch, del_w_batch, del_c_batch,
         best_complementarity_batch, mu_affine_batch, mu_curr_batch,
-        ipm_opt, bcnt, options.logger, kkts, cbs, class,
+        ipm_opt, bcnt, options.logger, batch_kkt, batch_cb, class,
         n, m, nlb, nub, nx, ns,
         ind_cons.ind_ineq, ind_cons.ind_fixed, ind_cons.ind_lb, ind_cons.ind_ub,
         ind_cons.ind_llb, ind_cons.ind_uub,

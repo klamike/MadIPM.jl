@@ -156,7 +156,7 @@ end
 
 
 function madipm_batch(ms; kwargs...)
-    solver = MadIPM.BatchMPCSolver(ms; kwargs...)
+    solver = MadIPM.SameStructureBatchMPCSolver(ms; kwargs...)
     return MadIPM.batch_solve!(solver)
 end
 
