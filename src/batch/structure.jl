@@ -88,7 +88,7 @@ Base.length(batch::SameStructureBatchMPCSolver) = batch.batch_size
 Base.iterate(batch::SameStructureBatchMPCSolver, i=1) = i > length(batch) ? nothing : (batch.solvers[i], i+1)
 Base.getindex(batch::SameStructureBatchMPCSolver, i::Int) = batch.solvers[i]
 
-function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, Model <: NLPModels.AbstractNLPModel{T}}
+function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, VT0 <: AbstractVector{T}, Model <: NLPModels.AbstractNLPModel{T, VT0}}
     batch_size = length(nlps)
     batch_size == 0 && error("BatchMPCSolver requires at least one model")
     
@@ -99,11 +99,11 @@ function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, M
         @assert NLPModels.get_nvar(nlp) == nvar "All models must have same number of variables (model $i differs)"
         @assert NLPModels.get_ncon(nlp) == ncon "All models must have same number of constraints (model $i differs)"
     end
-    
-    # FIXME
-    MT = Matrix{T}
-    VT = Vector{T}
-    VI = Vector{Int}
+
+    x0 = NLPModels.get_x0(nlps[1])
+    VT = typeof(x0)
+    MT = typeof(similar(x0, T, 0, 0))
+    VI = typeof(similar(x0, Int, 0))
     
     # shared
     options = load_options(nlps[1]; kwargs...)

@@ -91,7 +91,8 @@ function SparseBatchCallback(
         @assert NLPModels.get_nnzh(nlp.meta) == nnzh "All models must have same nnzh (model $i differs)"
     end
 
-    MI = Matrix{Int}
+    x0 = NLPModels.get_x0(nlp1)
+    MI = typeof(similar(x0, Int, 0, 0))
 
     con_buffer = :con_buffer in shared ? VT(undef, ncon) : MT(undef, ncon, batch_size)
     jac_buffer = :jac_buffer in shared ? VT(undef, nnzj) : MT(undef, nnzj, batch_size)
