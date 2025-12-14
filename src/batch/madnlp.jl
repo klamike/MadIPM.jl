@@ -46,13 +46,9 @@ end
 
 # TODO: will these be needed?
 MadNLP.full(bpv::BatchPrimalVector) = bpv.values
-MadNLP.full(bpv::BatchPrimalVector, i::Int) = bpv.full_views[i]
 MadNLP.primal(bpv::BatchPrimalVector) = bpv.values
-MadNLP.primal(bpv::BatchPrimalVector, i::Int) = MadNLP.full(bpv, i)
 MadNLP.variable(bpv::BatchPrimalVector) = bpv.variable_view
-MadNLP.variable(bpv::BatchPrimalVector, i::Int) = bpv.x[i]
 MadNLP.slack(bpv::BatchPrimalVector) = bpv.slack_view
-MadNLP.slack(bpv::BatchPrimalVector, i::Int) = bpv.s[i]
 
 struct BatchUnreducedKKTVector{T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}, VI}
     values::MT
@@ -120,17 +116,11 @@ end
 
 # TODO: will these be needed?
 MadNLP.full(buktv::BatchUnreducedKKTVector) = buktv.values
-MadNLP.full(buktv::BatchUnreducedKKTVector, i::Int) = buktv.full_views[i]
 MadNLP.primal(buktv::BatchUnreducedKKTVector) = buktv.primal_view
-MadNLP.primal(buktv::BatchUnreducedKKTVector, i::Int) = buktv.xp[i]
 MadNLP.dual(buktv::BatchUnreducedKKTVector) = buktv.dual_view
-MadNLP.dual(buktv::BatchUnreducedKKTVector, i::Int) = buktv.xl[i]
 MadNLP.primal_dual(buktv::BatchUnreducedKKTVector) = buktv.primal_dual_view
-MadNLP.primal_dual(buktv::BatchUnreducedKKTVector, i::Int) = buktv.x[i]
 MadNLP.dual_lb(buktv::BatchUnreducedKKTVector) = buktv.dual_lb_view
-MadNLP.dual_lb(buktv::BatchUnreducedKKTVector, i::Int) = buktv.xzl[i]
 MadNLP.dual_ub(buktv::BatchUnreducedKKTVector) = buktv.dual_ub_view
-MadNLP.dual_ub(buktv::BatchUnreducedKKTVector, i::Int) = buktv.xzu[i]
 
 function MadNLP.print_summary(solver::AbstractMPCSolver)
     # TODO inquire this from nlpmodel wrapper
