@@ -15,17 +15,14 @@ function BatchUnreducedKKTVector(
     values = MT(undef, n+m+nlb+nub, batch_size)
     fill!(values, zero(T))
 
-    row_stride = n + m + nlb + nub
-    views = _init_batch_views!(Vector{VT}(undef, batch_size), values, n+m+nlb+nub, 0, row_stride)
+    row_stride = n+m+nlb+nub
+    views = _init_batch_views!(Vector{VT}(undef, batch_size), values, row_stride, 0, row_stride)
 
     primal_dual_view = view(values, 1:(n+m), :)
     primal_dual_buffer = VT(undef, (n+m) * batch_size)
     fill!(primal_dual_buffer, zero(T))
 
-    return BatchUnreducedKKTVector(
-        values, views, primal_dual_view, primal_dual_buffer,
-        n, m, nlb, nub
-    )
+    return BatchUnreducedKKTVector(values, views, primal_dual_view, primal_dual_buffer, n, m, nlb, nub)
 end
 
 MadNLP.primal_dual(buktv::BatchUnreducedKKTVector) = vec(buktv.primal_dual_view)

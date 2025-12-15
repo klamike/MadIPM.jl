@@ -8,6 +8,7 @@ import MadIPM
 import MadNLP
 import MadNLPGPU
 
-include("cudss_uniform.jl")
+include("solver.jl")
+include("kkt.jl")
 
 end  # module
