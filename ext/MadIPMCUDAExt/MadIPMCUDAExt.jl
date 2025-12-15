@@ -14,8 +14,7 @@ import MadNLPGPU
 import CUDSS
 
 include("cuda_wrapper.jl")
-include("cudss_batch.jl")
-include("batch.jl")
+include("cudss_uniform.jl")
 
 @kernel function _fill_sparse_structure!(rows, cols, Ap, Aj, Ax)
     i = @index(Global, Linear)
@@ -142,4 +141,3 @@ function Base.convert(::Type{QuadraticModel{T, S}}, qp::QuadraticModel{T}) where
 end
 
 end
-
