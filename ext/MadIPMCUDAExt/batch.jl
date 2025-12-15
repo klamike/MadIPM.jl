@@ -1,31 +1,29 @@
 import MadIPM: is_done, is_factorized
 
 function MadIPM.batch_factorize_regularized_system!(
-    batch_solver::MadIPM.SameStructureBatchMPCSolver{T, Ts, MT, VT, VI, KKTSystem, BK}
+    batch_solver::MadIPM.SameStructureBatchMPCSolver{T, KKTSystem, BK}
 ) where {
-    T, Ts, MT, VT, VI,
+    T,
     KKTSystem <: MadNLP.SparseKKTSystem,
-    BK <: MadIPM.SparseSameStructureBatchKKTSystem{T, <:AbstractVector{T}, <:AbstractVector{Int32}, KKTSystem, <:CUDSSUniformBatchSolver{T}},
+    BK <: MadIPM.SparseSameStructureBatchKKTSystem{T, KKTSystem, <:CUDSSUniformBatchSolver{T}},
 }
+    # NOTE: no trials since is_factorized(::CUDSS) = true
     for solver in batch_solver
         is_done(solver) && continue
         MadIPM.set_aug_diagonal_reg!(solver.kkt, solver)
-        # MadNLP.@trace(solver.logger,"Factorization started.")
         MadNLP.build_kkt!(solver.kkt)
-        # solver.cnt.linear_solver_time += @elapsed begin
-        #     MadNLP.factorize!(solver.kkt.linear_solver)
-        # end
     end
+    # FIXME: timer, filter batch
     MadNLP.factorize!(batch_solver.kkts.batch_solver)
     return
 end
 
 function MadIPM.batch_solve_system!(
-    batch_solver::MadIPM.SameStructureBatchMPCSolver{T, Ts, MT, VT, VI, KKTSystem, BK}
+    batch_solver::MadIPM.SameStructureBatchMPCSolver{T, KKTSystem, BK}
 ) where {
-    T, Ts, MT, VT, VI,
+    T,
     KKTSystem <: MadNLP.SparseKKTSystem,
-    BK <: MadIPM.SparseSameStructureBatchKKTSystem{T, <:AbstractVector{T}, <:AbstractVector{Int32}, KKTSystem, <:CUDSSUniformBatchSolver{T}},
+    BK <: MadIPM.SparseSameStructureBatchKKTSystem{T, KKTSystem, <:CUDSSUniformBatchSolver{T}},
 }   
     @error "Batched solve"
     for solver in batch_solver
@@ -33,11 +31,11 @@ function MadIPM.batch_solve_system!(
         MadIPM._presolve_system!(solver)
         MadNLP.reduce_rhs!(solver.kkt, solver.d)
     end
-
-    d = batch_solver.d
-    copyto!(d.primal_dual_buffer, vec(d.primal_dual_view))
+    
+    # FIXME: primal_dual(::BatchUnreducedKKTVector) is not contiguous
+    copyto!(d.primal_dual_buffer, MadNLP.primal_dual(batch_solver.d))
     MadNLP.solve!(batch_solver.kkts.batch_solver, d.primal_dual_buffer)
-    copyto!(vec(d.primal_dual_view), d.primal_dual_buffer)
+    copyto!(MadNLP.primal_dual(batch_solver.d), d.primal_dual_buffer)
 
     for solver in batch_solver
         is_done(solver) && continue

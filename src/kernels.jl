@@ -122,8 +122,8 @@ function set_extra_correction!(
 end
 
 function set_aug_diagonal_reg!(kkt::MadNLP.AbstractKKTSystem{T}, solver::MadNLP.AbstractMadNLPSolver{T}) where T
-    fill!(kkt.reg, solver.del_w[])
-    fill!(kkt.du_diag, solver.del_c[])
+    fill!(kkt.reg, solver.del_w)
+    fill!(kkt.du_diag, solver.del_c)
     kkt.l_diag .= solver.xl_r .- solver.x_lr   # (Xˡ - X)
     kkt.u_diag .= solver.x_ur .- solver.xu_r   # (X - Xᵘ)
     copyto!(kkt.l_lower, solver.zl_r)
@@ -137,8 +137,8 @@ end
 
 # Special function for ScaledSparseKKTSystem to ensure coefficients are positive
 function set_aug_diagonal_reg!(kkt::MadNLP.ScaledSparseKKTSystem{T}, solver::MadNLP.AbstractMadNLPSolver{T}) where T
-    fill!(kkt.reg, solver.del_w[])
-    fill!(kkt.du_diag, solver.del_c[])
+    fill!(kkt.reg, solver.del_w)
+    fill!(kkt.du_diag, solver.del_c)
     kkt.l_diag .= solver.x_lr .- solver.xl_r   # (X - Xˡ)
     kkt.u_diag .= solver.xu_r .- solver.x_ur   # (Xᵘ - X)
     copyto!(kkt.l_lower, solver.zl_r)
@@ -215,7 +215,7 @@ function update_barrier!(rule::Mehrotra, solver, mu_affine)
     else
         1.0
     end
-    solver.mu[] = max(solver.opt.mu_min, sigma * mu_curr)
+    solver.mu = max(solver.opt.mu_min, sigma * mu_curr)
     return mu_curr
 end
 
@@ -290,17 +290,17 @@ end
 
 function update_step!(rule::ConservativeStep, solver)
     alpha_p, alpha_d = get_fraction_to_boundary_step(solver, rule.tau)
-    solver.alpha_p[] = alpha_p
-    solver.alpha_d[] = alpha_d
+    solver.alpha_p = alpha_p
+    solver.alpha_d = alpha_d
     return
 end
 
 # Implement conservative rule for QP
 function update_step!(rule::AdaptiveStep, solver)
-    tau = max(1-solver.mu[], rule.tau_min)
+    tau = max(1-solver.mu, rule.tau_min)
     alpha_p, alpha_d = get_fraction_to_boundary_step(solver, tau)
-    solver.alpha_p[] = alpha_p
-    solver.alpha_d[] = alpha_d
+    solver.alpha_p = alpha_p
+    solver.alpha_d = alpha_d
     return
 end
 
@@ -352,8 +352,8 @@ function update_step!(rule::MehrotraAdaptiveStep, solver)
     end
     # end
 
-    solver.alpha_p[] = max(alpha_p, rule.gamma_f * max_alpha_p)
-    solver.alpha_d[] = max(alpha_d, rule.gamma_f * max_alpha_d)
+    solver.alpha_p = max(alpha_p, rule.gamma_f * max_alpha_p)
+    solver.alpha_d = max(alpha_d, rule.gamma_f * max_alpha_d)
     return
 end
 
@@ -362,32 +362,32 @@ end
 =#
 
 function init_regularization!(solver::AbstractMPCSolver, ::NoRegularization)
-    solver.del_w[] = 1.0
-    solver.del_c[] = 0.0
+    solver.del_w = 1.0
+    solver.del_c = 0.0
     return
 end
 
 function update_regularization!(solver::AbstractMPCSolver, ::NoRegularization)
-    solver.del_w[] = 0.0
-    solver.del_c[] = 0.0
+    solver.del_w = 0.0
+    solver.del_c = 0.0
     return
 end
 
 function init_regularization!(solver::AbstractMPCSolver, reg::FixedRegularization)
-    solver.del_w[] = 1.0
-    solver.del_c[] = reg.delta_d
+    solver.del_w = 1.0
+    solver.del_c = reg.delta_d
     return
 end
 
 function update_regularization!(solver::AbstractMPCSolver, reg::FixedRegularization)
-    solver.del_w[] = reg.delta_p
-    solver.del_c[] = reg.delta_d
+    solver.del_w = reg.delta_p
+    solver.del_c = reg.delta_d
     return
 end
 
 function init_regularization!(solver::AbstractMPCSolver, reg::AdaptiveRegularization)
-    solver.del_w[] = 1.0
-    solver.del_c[] = reg.delta_d
+    solver.del_w = 1.0
+    solver.del_c = reg.delta_d
     return
 end
 
@@ -395,8 +395,8 @@ function update_regularization!(solver::AbstractMPCSolver, reg::AdaptiveRegulari
     reg.delta_p = max(reg.delta_p / 10.0, reg.delta_min)
     # Dual regularization is negative!
     reg.delta_d = min(reg.delta_d / 10.0, -reg.delta_min)
-    solver.del_w[] = reg.delta_p
-    solver.del_c[] = reg.delta_d
+    solver.del_w = reg.delta_p
+    solver.del_c = reg.delta_d
     return
 end
 

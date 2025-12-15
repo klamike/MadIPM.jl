@@ -158,9 +158,10 @@ function batch_solve!(
     end
 
     try
-        for solver in batch_solver
-            MadNLP.@notice(solver.logger,"This is MadIPM, running with $(MadNLP.introduce(solver.kkt.linear_solver))\n")
-        end
+        # FIXME: batch_introduce
+        # for solver in batch_solver
+        #     MadNLP.@notice(solver.logger,"This is MadIPM, running with $(MadNLP.introduce(solver.kkt.linear_solver))\n")
+        # end
         batch_initialize!(batch_solver)
         batch_mpc!(batch_solver)
     catch e
@@ -175,7 +176,7 @@ function batch_solve!(
             MadNLP.@notice(solver.logger,"EXIT: $(MadNLP.get_status_output(solver.status, solver.opt))")
             finalize(solver.logger)
 
-            update_solution!(batch_stats[i], solver)
+            MadNLP.update!(batch_stats[i],solver)
         end
     end
 
@@ -184,8 +185,12 @@ end
 
 
 function madipm_batch(ms; kwargs...)
-    solver = MadIPM.SameStructureBatchMPCSolver(ms; kwargs...)
-    return MadIPM.batch_solve!(solver)
+    if isdefined(Main, :CUDSS)  # FIXME
+        solver = MadIPM.SameStructureBatchMPCSolver(ms; kwargs...)
+        return MadIPM.batch_solve!(solver)
+    else
+        return madipm_foreach(ms; kwargs...)
+    end
 end
 
 function madipm_foreach(ms; kwargs...)

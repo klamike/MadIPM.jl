@@ -11,20 +11,16 @@ function factorize_regularized_system!(solver)
         if is_factorized(solver.kkt.linear_solver)
             break
         end
-        solver.del_w[] *= 100.0
-        solver.del_c[] *= 100.0
+        solver.del_w *= 100.0
+        solver.del_c *= 100.0
     end
 end
 
-function _presolve_system!(
-    solver::MadNLP.AbstractMadNLPSolver{T},
-) where T
+function _presolve_system!(solver::AbstractMPCSolver)
     copyto!(MadNLP.full(solver.d), MadNLP.full(solver.p))
 end
 
-function _postsolve_system!(
-    solver::MadNLP.AbstractMadNLPSolver{T},
-) where T
+function _postsolve_system!(solver::AbstractMPCSolver{T}) where T
     d = solver.d
     p = solver.p
     # Check residual
@@ -40,15 +36,11 @@ function _postsolve_system!(
         @sprintf("Residual after linear solve: %6.2e", residual_ratio),
     )
     if isnan(residual_ratio) || (solver.opt.check_residual && (residual_ratio > solver.opt.tol_linear_solve))
-        @error "SolveException" residual_ratio
         throw(MadNLP.SolveException)
     end
 end
 
-function solve_system!(
-    solver::MadNLP.AbstractMadNLPSolver{T},
-) where T
-    @error "Unbatched solve"
+function solve_system!(solver::AbstractMPCSolver)
     _presolve_system!(solver)
     MadNLP.solve!(solver.kkt, solver.d)
     _postsolve_system!(solver)

@@ -58,7 +58,7 @@ function simple_lp(; Avals=[1.0; 1.0])
         name = "simpleLP",
     )
 end
-#=
+
 @testset "Test with DenseDummyQP" begin
     # Test results match with MadNLP
     @testset "Size: ($n, $m)" for (n, m) in [(10, 0), (10, 5), (50, 10)]
@@ -160,7 +160,7 @@ end
         new_qp = MadIPM.standard_form_qp(qp)
         solver = MadIPM.MPCSolver(new_qp; print_level=MadNLP.ERROR)
         sol = MadIPM.solve!(solver)
-        @test sol.objective == sol_ref.objective
+        @test sol.objective ≈ sol_ref.objective
     end
 
     @testset "NormalKKTSystem implementation" begin
@@ -196,8 +196,7 @@ end
         @test sol.multipliers ≈ sol_ref.multipliers atol=1e-6
     end
 end
-=#
-#=
+
 @testset "Batch solve end-to-end test" begin
     n_batch = 5
     qps = [simple_lp(Avals=[i * 0.5; i * 2]) for i in 1:n_batch]
@@ -240,10 +239,10 @@ end
         @test batch_stats3[i].solution ≈ individual_stats[i].solution atol=1e-6
     end
 end
-# @testset "MathOptInterface" begin
-#     include("MOI_wrapper.jl")
-# end
-=#
+@testset "MathOptInterface" begin
+    include("MOI_wrapper.jl")
+end
+
 
 if CUDA.functional()
     include("test_gpu.jl")

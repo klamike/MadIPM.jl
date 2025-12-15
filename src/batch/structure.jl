@@ -1,22 +1,23 @@
-include("madnlp_rhs.jl")
-include("madnlp_cb.jl")
-include("madnlp_kkt.jl")
+include("utils.jl")
+include("rhs.jl")
+include("callback.jl")
+include("kkt.jl")
 
 abstract type AbstractBatchMPCSolver{T} end
 
 mutable struct SameStructureBatchMPCSolver{
-    T, Ts,
+    T,
+    KKTSystem <: MadNLP.AbstractKKTSystem,
+    BK <: AbstractBatchKKTSystem{T, KKTSystem},
     MT <: AbstractMatrix{T},
     VT <: AbstractVector{T},
     VI <: AbstractVector{Int},
-    KKTSystem <: MadNLP.AbstractKKTSystem,
-    BK <: AbstractBatchKKTSystem{T, KKTSystem},
     Model <: NLPModels.AbstractNLPModel{T,VT},
     CB <: MadNLP.AbstractCallback{T},
 } <: AbstractBatchMPCSolver{T}
     nlps::Vector{Model}
     batch_size::Int
-    solvers::Vector{MPCSolver{T, Ts, VT, VI, KKTSystem, Model, CB}}
+    solvers::Vector{MPCSolver{T, VT, VI, KKTSystem, Model, CB}}
 
     x::BatchPrimalVector{T, MT, VT, VI}
     zl::BatchPrimalVector{T, MT, VT, VI}
@@ -36,22 +37,6 @@ mutable struct SameStructureBatchMPCSolver{
     correction_lb::MT
     correction_ub::MT
     rhs::MT
-
-    obj_val::Vector{T}
-    dobj_val::Vector{T}
-    inf_pr::Vector{T}
-    inf_du::Vector{T}
-    inf_compl::Vector{T}
-    norm_b::Vector{T}
-    norm_c::Vector{T}
-    mu::Vector{T}
-    alpha_p::Vector{T}
-    alpha_d::Vector{T}
-    del_w::Vector{T}
-    del_c::Vector{T}
-    best_complementarity::Vector{T}
-    mu_affine::Vector{T}
-    mu_curr::Vector{T}
 
     opt::IPMOptions
     cnt::MadNLP.MadNLPCounters  # FIXME
@@ -91,8 +76,7 @@ Base.getindex(batch::SameStructureBatchMPCSolver, i::Int) = batch.solvers[i]
 function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, VT0 <: AbstractVector{T}, Model <: NLPModels.AbstractNLPModel{T, VT0}}
     batch_size = length(nlps)
     batch_size == 0 && error("BatchMPCSolver requires at least one model")
-    
-    # Validate all models have same dimensions
+
     nvar = NLPModels.get_nvar(nlps[1])
     ncon = NLPModels.get_ncon(nlps[1])
     for (i, nlp) in enumerate(nlps)
@@ -112,6 +96,7 @@ function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, V
         fixed_variable_treatment=ipm_opt.fixed_variable_treatment,
         equality_treatment=ipm_opt.equality_treatment
     )
+
     for (i, nlp) in enumerate(nlps)
         _ind_cons = MadNLP.get_index_constraints(nlp;
             fixed_variable_treatment=ipm_opt.fixed_variable_treatment,
@@ -119,6 +104,8 @@ function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, V
         )
         @assert _ind_cons == ind_cons "All models must have same ind_cons"
     end
+
+    # TODO: check same structure
     
     ind_lb = ind_cons.ind_lb
     ind_ub = ind_cons.ind_ub
@@ -131,8 +118,7 @@ function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, V
 
     nnzh = MadNLP.get_nnzh(nlps[1])
     class = iszero(nnzh) ? LinearProgram() : QuadraticProgram()
-    
-    # batched vectors
+
     x_batch = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
     zl_batch = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
     zu_batch = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
@@ -144,31 +130,13 @@ function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, V
     p_batch = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
     _w1_batch = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
     _w2_batch = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
-    
-    # batched buffers
-    y_batch = MT(undef, m, batch_size)
-    c_batch = MT(undef, m, batch_size)
-    jacl_batch = MT(undef, n, batch_size)
+
     correction_lb_batch = MT(undef, nlb, batch_size)
     correction_ub_batch = MT(undef, nub, batch_size)
+    jacl_batch = MT(undef, n, batch_size)
+    y_batch = MT(undef, m, batch_size)
+    c_batch = MT(undef, m, batch_size)
     rhs_batch = MT(undef, m, batch_size)
-    
-    # NOTE: using CPU arrays to avoid scalar indexing. in non-batched case, these are CPU floats
-    obj_val_batch = Vector{T}(undef, batch_size)
-    dobj_val_batch = Vector{T}(undef, batch_size)
-    inf_pr_batch = Vector{T}(undef, batch_size)
-    inf_du_batch = Vector{T}(undef, batch_size)
-    inf_compl_batch = Vector{T}(undef, batch_size)
-    norm_b_batch = Vector{T}(undef, batch_size)
-    norm_c_batch = Vector{T}(undef, batch_size)
-    mu_batch = Vector{T}(undef, batch_size)
-    alpha_p_batch = Vector{T}(undef, batch_size)
-    alpha_d_batch = Vector{T}(undef, batch_size)
-    del_w_batch = Vector{T}(undef, batch_size)
-    del_c_batch = Vector{T}(undef, batch_size)
-    best_complementarity_batch = Vector{T}(undef, batch_size)
-    mu_affine_batch = Vector{T}(undef, batch_size)
-    mu_curr_batch = Vector{T}(undef, batch_size)
     
     bcnt = MadNLP.MadNLPCounters(start_time=time())
     batch_cb = SparseBatchCallback(MT, VT, VI, nlps;
@@ -177,58 +145,43 @@ function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, V
         shared=(:jac_I, :jac_J, :hess_I, :hess_J),
     )
     batch_kkt = SparseSameStructureBatchKKTSystem(
-        ipm_opt.kkt_system,
         batch_cb,
         ind_cons,
         ipm_opt.linear_solver;
         opt_linear_solver=options.linear_solver,
     )
-    
-    Ts = typeof(MadNLP._madnlp_unsafe_wrap(obj_val_batch, 1, 1))  # FIXME
-    solvers = Vector{MPCSolver{T, Ts, VT, VI, typeof(batch_kkt.kkts[1]), Model, typeof(batch_cb.callbacks[1])}}(undef, batch_size)
+
+    solvers = Vector{MPCSolver{T, VT, VI, typeof(batch_kkt.kkts[1]), Model, typeof(batch_cb.callbacks[1])}}(undef, batch_size)
     for i in 1:batch_size
         cnt = MadNLP.MadNLPCounters(start_time=time())
-        x_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(x_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        zl_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(zl_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        zu_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(zu_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        xl_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(xl_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        xu_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(xu_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
-        f_i = MadNLP.PrimalVector(_madnlp_unsafe_column_wrap(f_batch.values, nx+ns, (i-1)*(nx+ns)+1, VT), nx, ns, ind_lb, ind_ub)
 
-        d_i = MadNLP.UnreducedKKTVector(_madnlp_unsafe_column_wrap(d_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
-        p_i = MadNLP.UnreducedKKTVector(_madnlp_unsafe_column_wrap(p_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
-        _w1_i = MadNLP.UnreducedKKTVector(_madnlp_unsafe_column_wrap(_w1_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
-        _w2_i = MadNLP.UnreducedKKTVector(_madnlp_unsafe_column_wrap(_w2_batch.values, n+m+nlb+nub, (i-1)*(n+m+nlb+nub)+1, VT), n, m, nlb, nub, ind_lb, ind_ub)
+        x_i  = _primal_vector_view(x_batch,  i, ind_lb, ind_ub)
+        zl_i = _primal_vector_view(zl_batch, i, ind_lb, ind_ub)
+        zu_i = _primal_vector_view(zu_batch, i, ind_lb, ind_ub)
+        xl_i = _primal_vector_view(xl_batch, i, ind_lb, ind_ub)
+        xu_i = _primal_vector_view(xu_batch, i, ind_lb, ind_ub)
+        f_i  = _primal_vector_view(f_batch,  i, ind_lb, ind_ub)
 
-        correction_lb_i = _madnlp_unsafe_column_wrap(correction_lb_batch, nlb, (i-1)*nlb + 1, VT)
-        correction_ub_i = _madnlp_unsafe_column_wrap(correction_ub_batch, nub, (i-1)*nub + 1, VT)
-        y_i = _madnlp_unsafe_column_wrap(y_batch, m, (i-1)*m + 1, VT)
-        c_i = _madnlp_unsafe_column_wrap(c_batch, m, (i-1)*m + 1, VT)
-        jacl_i = _madnlp_unsafe_column_wrap(jacl_batch, n, (i-1)*n + 1, VT)
-        rhs_i = _madnlp_unsafe_column_wrap(rhs_batch, m, (i-1)*m + 1, VT)
+        d_i   = _unreduced_kkt_vector_view(d_batch,   i, ind_lb, ind_ub)
+        p_i   = _unreduced_kkt_vector_view(p_batch,   i, ind_lb, ind_ub)
+        _w1_i = _unreduced_kkt_vector_view(_w1_batch, i, ind_lb, ind_ub)
+        _w2_i = _unreduced_kkt_vector_view(_w2_batch, i, ind_lb, ind_ub)
 
-        x_lr_i = view(full(x_i), ind_cons.ind_lb)
-        x_ur_i = view(full(x_i), ind_cons.ind_ub)
-        xl_r_i = view(full(xl_i), ind_cons.ind_lb)
-        xu_r_i = view(full(xu_i), ind_cons.ind_ub)
-        zl_r_i = view(full(zl_i), ind_cons.ind_lb)
-        zu_r_i = view(full(zu_i), ind_cons.ind_ub)
-        dx_lr_i = view(d_i.xp, ind_cons.ind_lb)
-        dx_ur_i = view(d_i.xp, ind_cons.ind_ub)
-        
-        obj_val_i = MadNLP._madnlp_unsafe_wrap(obj_val_batch, 1, i)
-        inf_pr_i = MadNLP._madnlp_unsafe_wrap(inf_pr_batch, 1, i)
-        inf_du_i = MadNLP._madnlp_unsafe_wrap(inf_du_batch, 1, i)
-        inf_compl_i = MadNLP._madnlp_unsafe_wrap(inf_compl_batch, 1, i)
-        norm_b_i = MadNLP._madnlp_unsafe_wrap(norm_b_batch, 1, i)
-        norm_c_i = MadNLP._madnlp_unsafe_wrap(norm_c_batch, 1, i)
-        mu_i = MadNLP._madnlp_unsafe_wrap(mu_batch, 1, i)
-        alpha_p_i = MadNLP._madnlp_unsafe_wrap(alpha_p_batch, 1, i)
-        alpha_d_i = MadNLP._madnlp_unsafe_wrap(alpha_d_batch, 1, i)
-        del_w_i = MadNLP._madnlp_unsafe_wrap(del_w_batch, 1, i)
-        del_c_i = MadNLP._madnlp_unsafe_wrap(del_c_batch, 1, i)
-        best_complementarity_i = MadNLP._madnlp_unsafe_wrap(best_complementarity_batch, 1, i)
-        mu_curr_i = MadNLP._madnlp_unsafe_wrap(mu_curr_batch, 1, i)
+        correction_lb_i = _matrix_column_view(correction_lb_batch, nlb, i, VT)
+        correction_ub_i = _matrix_column_view(correction_ub_batch, nub, i, VT)
+        jacl_i          = _matrix_column_view(jacl_batch,          n,   i, VT)
+        y_i             = _matrix_column_view(y_batch,             m,   i, VT)
+        c_i             = _matrix_column_view(c_batch,             m,   i, VT)
+        rhs_i           = _matrix_column_view(rhs_batch,           m,   i, VT)
+
+        x_lr_i  = view(full(x_i),  ind_lb)
+        x_ur_i  = view(full(x_i),  ind_ub)
+        xl_r_i  = view(full(xl_i), ind_lb)
+        xu_r_i  = view(full(xu_i), ind_ub)
+        zl_r_i  = view(full(zl_i), ind_lb)
+        zu_r_i  = view(full(zu_i), ind_ub)
+        dx_lr_i = view(d_i.xp, ind_lb)
+        dx_ur_i = view(d_i.xp, ind_ub)
 
         cnt.init_time = time() - cnt.start_time
 
@@ -237,16 +190,13 @@ function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, V
             ipm_opt, cnt, options.logger,
             n, m, nlb, nub,
             x_i, y_i, zl_i, zu_i, xl_i, xu_i,
-            obj_val_i, f_i, c_i,
+            zero(T), f_i, c_i,
             jacl_i,
-            d_i, p_i,
-            _w1_i, _w2_i,
-            correction_lb_i, correction_ub_i,
-            rhs_i,
-            ind_cons.ind_ineq, ind_cons.ind_fixed, ind_cons.ind_llb, ind_cons.ind_uub,
-            ind_cons.ind_lb, ind_cons.ind_ub,
+            d_i, p_i, _w1_i, _w2_i,
+            correction_lb_i, correction_ub_i, rhs_i,
+            ind_cons.ind_ineq, ind_cons.ind_fixed, ind_cons.ind_llb, ind_cons.ind_uub, ind_lb, ind_ub,
             x_lr_i, x_ur_i, xl_r_i, xu_r_i, zl_r_i, zu_r_i, dx_lr_i, dx_ur_i,
-            inf_pr_i, inf_du_i, inf_compl_i, norm_b_i, norm_c_i, mu_i, alpha_p_i, alpha_d_i, del_w_i, del_c_i, best_complementarity_i, mu_curr_i,
+            zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), typemax(T), zero(T),
             MadNLP.INITIAL,
         )
     end

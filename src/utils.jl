@@ -147,14 +147,6 @@ function load_options(nlp; options...)
     )
 end
 
-function update_solution!(stats::MadNLP.MadNLPExecutionStats{T}, solver) where T
-    MadNLP.update!(stats,solver)
-    if !NLPModels.get_minimize(solver.nlp)
-        stats.objective *= -one(T)
-    end
-    return
-end
-
 function coo_to_csr(
     n_rows,
     n_cols,
@@ -503,4 +495,3 @@ function standard_form_qp(qp::QuadraticModels.QuadraticModel)
         data,
     )
 end
-
