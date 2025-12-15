@@ -137,3 +137,4 @@ function Base.convert(::Type{QuadraticModel{T, S}}, qp::QuadraticModel{T}) where
 end
 
 end
+
