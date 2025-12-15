@@ -8,7 +8,7 @@ function MadIPM.batch_factorize_regularized_system!(
     T,
     KKTSystem <:MadNLP.SparseKKTSystem,
     BK <: MadIPM.SparseSameStructureBatchKKTSystem{T, KKTSystem,
-        <:CUDSSUniformBatchSolver{T}},
+        <:MadNLPGPU.CUDSSSolver{T}},
 }
     # NOTE: no trials since is_factorized(::CUDSS) = true
     for solver in batch_solver
@@ -26,7 +26,7 @@ function MadIPM.batch_solve_system!(
     T,
     KKTSystem <: MadNLP.SparseKKTSystem,
     BK <: MadIPM.SparseSameStructureBatchKKTSystem{T, KKTSystem,
-        <:CUDSSUniformBatchSolver{T}},
+        <:MadNLPGPU.CUDSSSolver{T}},
 }
     for solver in batch_solver
         is_done(solver) && continue
