@@ -1,7 +1,7 @@
 abstract type AbstractBatchCallback{CB<:MadNLP.AbstractCallback} end
 
-struct SparseBatchCallback{T,
-    SharedFields <: Tuple, CB <: MadNLP.SparseCallback,
+struct SparseBatchCallback{T,VT,
+    SharedFields <: Tuple, CB <: MadNLP.SparseCallback{T,VT},
 } <: AbstractBatchCallback{CB}
     callbacks::Vector{CB}
     shared::SharedFields
@@ -39,7 +39,6 @@ function init_samestructure_sparsecallback(
     # NOTE: obj_scale uses CPU arrays to avoid scalar indexing
     obj_scale = Vector{T}(undef, batch_size)
     fill!(obj_scale, one(T))
-    obj_sign = NLPModels.get_minimize(nlp1) ? one(T) : -one(T)  # FIXME: assumed same min/max
     con_scale = _alloc_batch_buffer(:con_scale, shared, ncon, batch_size, VT, MT)
     jac_scale = _alloc_batch_buffer(:jac_scale, shared, nnzj, batch_size, VT, MT)
 
@@ -68,7 +67,6 @@ function init_samestructure_sparsecallback(
             _batch_view(hess_I, :hess_I, shared, nnzh, i, VI),
             _batch_view(hess_J, :hess_J, shared, nnzh, i, VI),
             _scalar_view(obj_scale, i),
-            obj_sign,
             _batch_view(con_scale, :con_scale, shared, ncon, i, VT),
             _batch_view(jac_scale, :jac_scale, shared, nnzj, i, VT);
             fixed_variable_treatment, equality_treatment,

@@ -20,7 +20,6 @@ function _build_batch_kkt_element(
     jac_com, jac_csc_map = MadNLP.coo_to_csc(views.jac_raw)
     hess_com, hess_csc_map = MadNLP.coo_to_csc(views.hess_raw)
 
-    # FIXME: batch QN?
     quasi_newton = MadNLP.create_quasi_newton(MadNLP.ExactHessian, cb, structure.n)
     return MadNLP.SparseKKTSystem(
         views.hess, views.jac_callback, views.jac, quasi_newton,
@@ -35,14 +34,12 @@ function _build_batch_kkt_element(
 end
 
 function MadIPM.SparseSameStructureBatchKKTSystem(
-    batch_cb::MadIPM.SparseBatchCallback,
+    batch_cb::MadIPM.SparseBatchCallback{T,VT},
     ind_cons,
     linear_solver::Type{<:MadNLPGPU.CUDSSSolver};
     opt_linear_solver=MadNLP.default_options(linear_solver),
-)
+) where {T,VT}
     cb1 = batch_cb.callbacks[1]
-    T = eltype(cb1.con_buffer)  # FIXME
-    VT = typeof(cb1.con_buffer)  # FIXME
 
     structure = MadNLP._build_sparsekkt_structure(cb1, ind_cons, MadNLP.ExactHessian)
     (; aug_mat_length) = structure
@@ -54,25 +51,22 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
     nzVals = VT(undef, aug_mat_length * batch_size)
     fill!(nzVals, zero(T))
 
+    # FIXME some extra work here
     V_1 = MadNLP._madnlp_unsafe_wrap(nzVals, aug_mat_length, 1)
-    kkt_1_temp = MadNLP.build_sparse_kkt_system(
-        cb1, ind_cons, aug_I, aug_J, V_1, structure, linear_solver;
-        opt_linear_solver,
-    )
+    views = _build_sparsekkt_views(VT, aug_I, aug_J, V_1, structure)
+    aug_com, aug_csc_map = coo_to_csc(views.aug_raw)
+    nnz_csc = length(aug_com.nzVal)
 
-    nnz_csc = length(kkt_1_temp.aug_com.nzVal)
     csc_nzVals = VT(undef, nnz_csc * batch_size)
     fill!(csc_nzVals, zero(T))
 
-    aug_csc_map_1 = kkt_1_temp.aug_csc_map
     csc_nzVal_1 = MadNLP._madnlp_unsafe_wrap(csc_nzVals, nnz_csc, 1)
     kkt_1 = _build_batch_kkt_element(
         cb1, ind_cons, aug_I, aug_J, V_1, structure,
-        kkt_1_temp.aug_com, aug_csc_map_1, csc_nzVal_1;
+        aug_com, aug_csc_map, csc_nzVal_1;
     )
 
-    KKTType = typeof(kkt_1)  # FIXME
-    kkts = Vector{KKTType}(undef, batch_size)
+    kkts = Vector{typeof(kkt_1)}(undef, batch_size)
     kkts[1] = kkt_1
 
     for i in 2:batch_size
@@ -85,12 +79,12 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
 
         kkts[i] = _build_batch_kkt_element(
             cb_i, ind_cons, aug_I, aug_J, V_i, structure,
-            kkt_1.aug_com, aug_csc_map_1, csc_nzVal_i;
+            aug_com, aug_csc_map, csc_nzVal_i;
         )
     end
 
     batch_solver = CUDSSUniformBatchSolver(
-        kkt_1.aug_com, csc_nzVals,
+        aug_com, csc_nzVals,
         batch_size;
         opt=opt_linear_solver,
     )
