@@ -7,12 +7,12 @@ struct SparseBatchCallback{T,
     shared::SharedFields
 end
 
-function SparseBatchCallback(
+function init_samestructure_sparsecallback(
     ::Type{MT}, ::Type{VT}, ::Type{VI},
     nlps::Vector{Model};
     fixed_variable_treatment::Type{FH}=MadNLP.MakeParameter,
     equality_treatment::Type{EH}=MadNLP.EnforceEquality,
-    shared::Tuple{Vararg{Symbol}}=(),
+    shared::Tuple{Vararg{Symbol}}=(:jac_I, :jac_J, :hess_I, :hess_J),
 ) where {T, MT <: AbstractMatrix{T}, VT <: AbstractVector{T}, VI <: AbstractVector{Int}, Model <: NLPModels.AbstractNLPModel{T, VT}, FH <: MadNLP.AbstractFixedVariableTreatment, EH <: MadNLP.AbstractEqualityTreatment}
 
     batch_size = length(nlps)
@@ -39,7 +39,7 @@ function SparseBatchCallback(
     # NOTE: obj_scale uses CPU arrays to avoid scalar indexing
     obj_scale = Vector{T}(undef, batch_size)
     fill!(obj_scale, one(T))
-    obj_sign = NLPModels.get_minimize(nlp1) ? one(T) : -one(T)
+    obj_sign = NLPModels.get_minimize(nlp1) ? one(T) : -one(T)  # FIXME: assumed same min/max
     con_scale = _alloc_batch_buffer(:con_scale, shared, ncon, batch_size, VT, MT)
     jac_scale = _alloc_batch_buffer(:jac_scale, shared, nnzj, batch_size, VT, MT)
 
@@ -50,17 +50,11 @@ function SparseBatchCallback(
     fill!(con_scale, one(T))
     fill!(jac_scale, one(T))
 
-    if :jac_I in shared && :jac_J in shared && nnzj > 0
-        NLPModels.jac_structure!(nlp1, jac_I, jac_J)
-    end
-    if :hess_I in shared && :hess_J in shared && nnzh > 0
-        NLPModels.hess_structure!(nlp1, hess_I, hess_J)
-    end
+    NLPModels.jac_structure!(nlp1, jac_I, jac_J)
+    NLPModels.hess_structure!(nlp1, hess_I, hess_J)
 
     CBType = MadNLP.SparseCallback{T, VT, Vector{T}, Base.RefValue{T}, VI, Model, FH{VT,VI}, EH}
     callbacks = Vector{CBType}(undef, batch_size)
-
-    populate_structure = !(:jac_I in shared && :jac_J in shared)
 
     for i in 1:batch_size
         callbacks[i] = MadNLP.init_sparse_callback!(
@@ -78,7 +72,7 @@ function SparseBatchCallback(
             _batch_view(con_scale, :con_scale, shared, ncon, i, VT),
             _batch_view(jac_scale, :jac_scale, shared, nnzj, i, VT);
             fixed_variable_treatment, equality_treatment,
-            populate_structure = populate_structure || i == 1,
+            populate_structure = i == 1,  # shared structure
         )
     end
 

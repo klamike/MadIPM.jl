@@ -96,10 +96,9 @@ function SparseSameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where
     rhs_batch = MT(undef, m, batch_size)
     
     bcnt = MadNLP.MadNLPCounters(start_time=time())
-    batch_cb = SparseBatchCallback(MT, VT, VI, nlps;
+    batch_cb = init_samestructure_sparsecallback(MT, VT, VI, nlps;
         fixed_variable_treatment=ipm_opt.fixed_variable_treatment,
         equality_treatment=ipm_opt.equality_treatment,
-        shared=(:jac_I, :jac_J, :hess_I, :hess_J),
     )
     batch_kkt = SparseSameStructureBatchKKTSystem(
         batch_cb,
