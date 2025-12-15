@@ -15,14 +15,13 @@ using MadNLPGPU
             linear_solver=MadNLPGPU.CUDSSSolver,
             cudss_algorithm=algo,
             print_level=MadNLP.ERROR,
-            rethrow_error=true,
         )
         results = MadIPM.solve!(solver)
         @test results.status == MadNLP.SOLVE_SUCCEEDED
     end
 end
 
-@testset "MadIPMCUDA Batch" begin
+@testset "MadIPMCUDSS Uniform Batch" begin
     n_batch = 5
     qps = [simple_lp(Avals=[i * 0.5; i * 2]) for i in 1:n_batch]
     for (i, qp) in enumerate(qps)
@@ -36,9 +35,7 @@ end
         solver = MadIPM.MPCSolver(
             qp_gpu;
             linear_solver=MadNLPGPU.CUDSSSolver,
-            cudss_algorithm=MadNLP.LDL,
-            print_level=MadNLP.DEBUG,
-            rethrow_error=true,
+            print_level=MadNLP.ERROR,
         )
         individual_stats[i] = MadIPM.solve!(solver)
         @test individual_stats[i].status == MadNLP.SOLVE_SUCCEEDED
@@ -47,9 +44,7 @@ end
     batch_stats = MadIPM.madipm_batch(
         qps_gpu;
         linear_solver=MadNLPGPU.CUDSSSolver,
-        cudss_algorithm=MadNLP.LDL,
-        print_level=MadNLP.DEBUG,
-        rethrow_error=true,
+        print_level=MadNLP.ERROR,
     )
     @test length(batch_stats) == n_batch
     for i in 1:n_batch
