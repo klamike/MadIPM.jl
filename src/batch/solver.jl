@@ -30,11 +30,6 @@ function batch_factorize_regularized_system!(batch_solver)
     end
     return
 end
-function batch_factorize_system!(batch_solver)
-    batch_update_regularization!(batch_solver)
-    batch_factorize_regularized_system!(batch_solver)
-end
-
 function batch_set_predictive_rhs!(batch_solver)
     for solver in batch_solver
         is_done(solver) && continue
@@ -46,11 +41,6 @@ function batch_solve_system!(batch_solver)
         is_done(solver) && continue
         solve_system!(solver)
     end
-    return
-end
-function batch_affine_direction!(batch_solver)
-    batch_set_predictive_rhs!(batch_solver)
-    batch_solve_system!(batch_solver)
     return
 end
 function batch_prediction_step_size!(batch_solver)
@@ -65,11 +55,6 @@ function batch_set_correction_rhs!(batch_solver)
         is_done(solver) && continue
         set_correction_rhs!(solver, solver.kkt, solver.mu[], solver.correction_lb, solver.correction_ub, solver.ind_lb, solver.ind_ub)
     end
-    return
-end
-function batch_mehrotra_correction_direction!(batch_solver)
-    batch_set_correction_rhs!(batch_solver)
-    batch_solve_system!(batch_solver)
     return
 end
 function batch_gondzio_correction_direction!(batch_solver)
@@ -91,6 +76,20 @@ function batch_apply_step!(batch_solver)
         is_done(solver) && continue
         apply_step!(solver)
     end
+    return
+end
+function batch_factorize_system!(batch_solver)
+    batch_update_regularization!(batch_solver)
+    batch_factorize_regularized_system!(batch_solver)
+end
+function batch_affine_direction!(batch_solver)
+    batch_set_predictive_rhs!(batch_solver)
+    batch_solve_system!(batch_solver)
+    return
+end
+function batch_mehrotra_correction_direction!(batch_solver)
+    batch_set_correction_rhs!(batch_solver)
+    batch_solve_system!(batch_solver)
     return
 end
 function batch_mpc!(batch_solver)

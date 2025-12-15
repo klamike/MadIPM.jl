@@ -20,15 +20,15 @@ mutable struct MPCSolver{
     nlb::Int
     nub::Int
 
-    x::MadNLP.PrimalVector{T} # primal (after reformulation)
+    x::MadNLP.PrimalVector{T, VT, VI} # primal (after reformulation)
     y::VT # dual
-    zl::MadNLP.PrimalVector{T} # dual (after reformulation)
-    zu::MadNLP.PrimalVector{T} # dual (after reformulation)
-    xl::MadNLP.PrimalVector{T} # primal lower bound (after reformulation)
-    xu::MadNLP.PrimalVector{T} # primal upper bound (after reformulation)
+    zl::MadNLP.PrimalVector{T, VT, VI} # dual (after reformulation)
+    zu::MadNLP.PrimalVector{T, VT, VI} # dual (after reformulation)
+    xl::MadNLP.PrimalVector{T, VT, VI} # primal lower bound (after reformulation)
+    xu::MadNLP.PrimalVector{T, VT, VI} # primal upper bound (after reformulation)
 
     obj_val::T
-    f::MadNLP.PrimalVector{T}
+    f::MadNLP.PrimalVector{T, VT, VI}
     c::VT
 
     jacl::VT
@@ -76,7 +76,7 @@ mutable struct MPCSolver{
     status::MadNLP.Status
 end
 
-function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, VT}
+function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; d=nothing, cb=nothing, kkt=nothing, kwargs...) where {T, VT}
     options = load_options(nlp; kwargs...)
 
     ipm_opt = options.interior_point
@@ -84,12 +84,12 @@ function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, V
     @assert MadNLP.is_supported(ipm_opt.linear_solver, T)
 
     cnt = MadNLP.MadNLPCounters(start_time=time())
-    cb = MadNLP.create_callback(
+    cb = isnothing(cb) ? MadNLP.create_callback(
         MadNLP.SparseCallback,
         nlp;
         fixed_variable_treatment=ipm_opt.fixed_variable_treatment,
         equality_treatment=ipm_opt.equality_treatment,
-    )
+    ) : cb
 
     # generic options
     MadNLP.@trace(logger,"Initializing variables.")
@@ -114,13 +114,13 @@ function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, V
     nub = length(ind_ub)
 
     MadNLP.@trace(logger,"Initializing KKT system.")
-    kkt = MadNLP.create_kkt_system(
+    kkt = isnothing(kkt) ? MadNLP.create_kkt_system(
         ipm_opt.kkt_system,
         cb,
         ind_cons,
         ipm_opt.linear_solver;
         opt_linear_solver=options.linear_solver,
-    )
+    ) : kkt
 
     x = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
     xl = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
@@ -129,7 +129,7 @@ function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, V
     zu = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
     f = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
 
-    d = MadNLP.UnreducedKKTVector(VT, n, m, nlb, nub, ind_lb, ind_ub)
+    d = isnothing(d) ? MadNLP.UnreducedKKTVector(VT, n, m, nlb, nub, ind_lb, ind_ub) : d
     p = MadNLP.UnreducedKKTVector(VT, n, m, nlb, nub, ind_lb, ind_ub)
     _w1 = MadNLP.UnreducedKKTVector(VT, n, m, nlb, nub, ind_lb, ind_ub)
     _w2 = MadNLP.UnreducedKKTVector(VT, n, m, nlb, nub, ind_lb, ind_ub)
@@ -138,6 +138,7 @@ function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, V
     correction_lb = VT(undef, nlb)
     correction_ub = VT(undef, nub)
     jacl = VT(undef,n)
+    c_trial = VT(undef, m)
     y = VT(undef, m)
     c = VT(undef, m)
     rhs = VT(undef, m)
