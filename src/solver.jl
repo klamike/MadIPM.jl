@@ -328,7 +328,7 @@ function is_done(solver)
 end
 
 # Predictor-corrector method
-function mpc!(solver::AbstractMPCSolver)
+function mpc!(solver::MadNLP.AbstractMadNLPSolver)
     while true
         # Check termination criteria
         MadNLP.print_iter(solver)
@@ -339,7 +339,7 @@ function mpc!(solver::AbstractMPCSolver)
         mpc_step!(solver)
     end
 end
-function mpc_step!(solver::AbstractMPCSolver)
+function mpc_step!(solver::MadNLP.AbstractMadNLPSolver)
     # Factorize KKT system
     factorize_system!(solver)
 

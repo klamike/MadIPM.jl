@@ -16,11 +16,11 @@ function factorize_regularized_system!(solver)
     end
 end
 
-function _presolve_system!(solver::AbstractMPCSolver)
+function _presolve_system!(solver::MadNLP.AbstractMadNLPSolver)
     copyto!(MadNLP.full(solver.d), MadNLP.full(solver.p))
 end
 
-function _postsolve_system!(solver::AbstractMPCSolver{T}) where T
+function _postsolve_system!(solver::MadNLP.AbstractMadNLPSolver{T}) where T
     d = solver.d
     p = solver.p
     # Check residual
@@ -40,7 +40,7 @@ function _postsolve_system!(solver::AbstractMPCSolver{T}) where T
     end
 end
 
-function solve_system!(solver::AbstractMPCSolver)
+function solve_system!(solver::MadNLP.AbstractMadNLPSolver)
     _presolve_system!(solver)
     MadNLP.solve!(solver.kkt, solver.d)
     _postsolve_system!(solver)
