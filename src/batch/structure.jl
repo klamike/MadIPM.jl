@@ -7,8 +7,7 @@ abstract type AbstractBatchMPCSolver{T} end
 
 mutable struct SparseSameStructureBatchMPCSolver{
     T,
-    KKTSystem <: MadNLP.AbstractKKTSystem,
-    BK <: AbstractBatchKKTSystem{T, KKTSystem},
+    KKT <: MadNLP.SparseKKTSystem,
     MT <: AbstractMatrix{T},
     VT <: AbstractVector{T},
     VI <: AbstractVector{Int},
@@ -17,56 +16,14 @@ mutable struct SparseSameStructureBatchMPCSolver{
 } <: AbstractBatchMPCSolver{T}
     nlps::Vector{Model}
     batch_size::Int
-    solvers::Vector{MPCSolver{T, VT, VI, KKTSystem, Model, CB}}
-
-    x::BatchPrimalVector{T, MT, VT, VI}
-    zl::BatchPrimalVector{T, MT, VT, VI}
-    zu::BatchPrimalVector{T, MT, VT, VI}
-    xl::BatchPrimalVector{T, MT, VT, VI}
-    xu::BatchPrimalVector{T, MT, VT, VI}
-    f::BatchPrimalVector{T, MT, VT, VI}
+    solvers::Vector{MPCSolver{T, VT, VI, KKT, Model, CB}}
 
     d::BatchUnreducedKKTVector{T, MT, VT, VI}
-    p::BatchUnreducedKKTVector{T, MT, VT, VI}
-    _w1::BatchUnreducedKKTVector{T, MT, VT, VI}
-    _w2::BatchUnreducedKKTVector{T, MT, VT, VI}
-
-    y::MT
-    c::MT
-    jacl::MT
-    correction_lb::MT
-    correction_ub::MT
-    rhs::MT
 
     opt::IPMOptions
     cnt::MadNLP.MadNLPCounters  # FIXME
     logger::MadNLP.MadNLPLogger
-    kkts::BK
-    cbs::AbstractBatchCallback{CB}
-    class::AbstractConicProblem
-
-    n::Int
-    m::Int
-    nlb::Int
-    nub::Int
-    nx::Int
-    ns::Int
-
-    ind_ineq::VI
-    ind_fixed::VI
-    ind_lb::VI
-    ind_ub::VI
-    ind_llb::VI
-    ind_uub::VI
-
-    x_lr::SubArray{T, 2, MT, <:Tuple}
-    x_ur::SubArray{T, 2, MT, <:Tuple}
-    xl_r::SubArray{T, 2, MT, <:Tuple}
-    xu_r::SubArray{T, 2, MT, <:Tuple}
-    zl_r::SubArray{T, 2, MT, <:Tuple}
-    zu_r::SubArray{T, 2, MT, <:Tuple}
-    dx_lr::SubArray{T, 2, MT, <:Tuple}
-    dx_ur::SubArray{T, 2, MT, <:Tuple}
+    kkts::AbstractBatchKKTSystem{T}
 end
 
 Base.length(batch_solver::SparseSameStructureBatchMPCSolver) = length(batch_solver.solvers)
@@ -200,17 +157,12 @@ function SparseSameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where
             MadNLP.INITIAL,
         )
     end
-    
+
     batch = SparseSameStructureBatchMPCSolver(
         nlps, batch_size, solvers,
-        x_batch, zl_batch, zu_batch, xl_batch, xu_batch, f_batch,
-        d_batch, p_batch, _w1_batch, _w2_batch,
-        y_batch, c_batch, jacl_batch, correction_lb_batch, correction_ub_batch, rhs_batch,
-        ipm_opt, bcnt, options.logger, batch_kkt, batch_cb, class,
-        n, m, nlb, nub, nx, ns,
-        ind_cons.ind_ineq, ind_cons.ind_fixed, ind_cons.ind_lb, ind_cons.ind_ub,
-        ind_cons.ind_llb, ind_cons.ind_uub,
-        x_lr_batch, x_ur_batch, xl_r_batch, xu_r_batch, zl_r_batch, zu_r_batch, dx_lr_batch, dx_ur_batch,
+        d_batch,
+        ipm_opt, bcnt, options.logger,
+        batch_kkt,
     )
 
     bcnt.init_time = time() - bcnt.start_time

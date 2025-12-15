@@ -1,51 +1,10 @@
 abstract type AbstractBatchCallback{CB<:MadNLP.AbstractCallback} end
 
 struct SparseBatchCallback{T,
-    ConBufT <: AbstractArray{T}, JacBufT <: AbstractArray{T}, GradBufT <: AbstractArray{T}, HessBufT <: AbstractArray{T},
-    JacIdxT <: AbstractArray{Int}, HessIdxT <: AbstractArray{Int},
-    ObjScaleT <: AbstractArray{T}, ConScaleT <: AbstractArray{T}, JacScaleT <: AbstractArray{T},
     SharedFields <: Tuple, CB <: MadNLP.SparseCallback,
 } <: AbstractBatchCallback{CB}
-    con_buffer::ConBufT
-    jac_buffer::JacBufT
-    grad_buffer::GradBufT
-    hess_buffer::HessBufT
-
-    jac_I::JacIdxT
-    jac_J::JacIdxT
-    hess_I::HessIdxT
-    hess_J::HessIdxT
-
-    obj_scale::ObjScaleT
-    con_scale::ConScaleT
-    jac_scale::JacScaleT
-
     callbacks::Vector{CB}
-
-    nvar::Int
-    ncon::Int
-    nnzj::Int
-    nnzh::Int
-    batch_size::Int
     shared::SharedFields
-
-    function SparseBatchCallback(
-        con_buffer::ConBufT, jac_buffer::JacBufT, grad_buffer::GradBufT, hess_buffer::HessBufT,
-        jac_I::JacIdxT, jac_J::JacIdxT,
-        hess_I::HessIdxT, hess_J::HessIdxT,
-        obj_scale::ObjScaleT, con_scale::ConScaleT, jac_scale::JacScaleT,
-        callbacks::Vector{CB},
-        nvar::Int, ncon::Int, nnzj::Int, nnzh::Int, batch_size::Int,
-        shared::SharedFields,
-    ) where {T, ConBufT<:AbstractArray{T}, JacBufT<:AbstractArray{T}, GradBufT<:AbstractArray{T}, HessBufT<:AbstractArray{T}, JacIdxT<:AbstractArray{Int}, HessIdxT<:AbstractArray{Int}, ObjScaleT<:AbstractVector{T}, ConScaleT<:AbstractArray{T}, JacScaleT<:AbstractArray{T}, SharedFields<:Tuple, CB<:MadNLP.SparseCallback}
-        new{T, ConBufT, JacBufT, GradBufT, HessBufT, JacIdxT, HessIdxT, ObjScaleT, ConScaleT, JacScaleT, SharedFields, CB}(
-            con_buffer, jac_buffer, grad_buffer, hess_buffer,
-            jac_I, jac_J, hess_I, hess_J,
-            obj_scale, con_scale, jac_scale,
-            callbacks,
-            nvar, ncon, nnzj, nnzh, batch_size, shared
-        )
-    end
 end
 
 function SparseBatchCallback(
@@ -124,24 +83,5 @@ function SparseBatchCallback(
         )
     end
 
-    return SparseBatchCallback(
-        con_buffer,
-        jac_buffer,
-        grad_buffer,
-        hess_buffer,
-        jac_I,
-        jac_J,
-        hess_I,
-        hess_J,
-        obj_scale,
-        con_scale,
-        jac_scale,
-        callbacks,
-        nvar,
-        ncon,
-        nnzj,
-        nnzh,
-        batch_size,
-        shared,
-    )
+    return SparseBatchCallback(callbacks, shared)
 end
