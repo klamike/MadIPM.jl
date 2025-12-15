@@ -8,9 +8,7 @@ function _build_batch_kkt_element(
     structure::MadNLP.SparseKKTStructure,
     aug_com_template::CUSPARSE.CuSparseMatrixCSC,
     aug_csc_map,
-    csc_nzVal::VT,
-    linear_solver::Type;
-    opt_linear_solver=MadNLP.default_options(linear_solver),
+    csc_nzVal::VT
 ) where {VT}
 
     views = MadNLP._build_sparsekkt_views(VT, I, J, V, structure)
@@ -70,8 +68,7 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
     csc_nzVal_1 = MadNLP._madnlp_unsafe_wrap(csc_nzVals, nnz_csc, 1)
     kkt_1 = _build_batch_kkt_element(
         cb1, ind_cons, aug_I, aug_J, V_1, structure,
-        kkt_1_temp.aug_com, aug_csc_map_1, csc_nzVal_1, linear_solver;
-        opt_linear_solver,
+        kkt_1_temp.aug_com, aug_csc_map_1, csc_nzVal_1;
     )
 
     KKTType = typeof(kkt_1)  # FIXME
@@ -88,8 +85,7 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
 
         kkts[i] = _build_batch_kkt_element(
             cb_i, ind_cons, aug_I, aug_J, V_i, structure,
-            kkt_1.aug_com, aug_csc_map_1, csc_nzVal_i, linear_solver;
-            opt_linear_solver,
+            kkt_1.aug_com, aug_csc_map_1, csc_nzVal_i;
         )
     end
 

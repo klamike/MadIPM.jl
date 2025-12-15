@@ -77,8 +77,7 @@ function SparseBatchCallback(
             obj_sign,
             _batch_view(con_scale, :con_scale, shared, ncon, i, VT),
             _batch_view(jac_scale, :jac_scale, shared, nnzj, i, VT);
-            fixed_variable_treatment,
-            equality_treatment,
+            fixed_variable_treatment, equality_treatment,
             populate_structure = populate_structure || i == 1,
         )
     end
