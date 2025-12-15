@@ -186,7 +186,7 @@ end
 
 function madipm_batch(ms; kwargs...)
     if isdefined(Main, :CUDSS)  # FIXME
-        solver = MadIPM.SameStructureBatchMPCSolver(ms; kwargs...)
+        solver = MadIPM.SparseSameStructureBatchMPCSolver(ms; kwargs...)
         return MadIPM.batch_solve!(solver)
     else
         return madipm_foreach(ms; kwargs...)

@@ -1,4 +1,4 @@
-function batch_evaluate_model!(batch_solver::SameStructureBatchMPCSolver)
+function batch_evaluate_model!(batch_solver::SparseSameStructureBatchMPCSolver)
     # TODO: use NLPModels.batch_*
     for solver in batch_solver
         is_done(solver) && continue

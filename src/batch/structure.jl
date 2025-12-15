@@ -5,7 +5,7 @@ include("kkt.jl")
 
 abstract type AbstractBatchMPCSolver{T} end
 
-mutable struct SameStructureBatchMPCSolver{
+mutable struct SparseSameStructureBatchMPCSolver{
     T,
     KKTSystem <: MadNLP.AbstractKKTSystem,
     BK <: AbstractBatchKKTSystem{T, KKTSystem},
@@ -69,11 +69,11 @@ mutable struct SameStructureBatchMPCSolver{
     dx_ur::SubArray{T, 2, MT, <:Tuple}
 end
 
-Base.length(batch::SameStructureBatchMPCSolver) = batch.batch_size
-Base.iterate(batch::SameStructureBatchMPCSolver, i=1) = i > length(batch) ? nothing : (batch.solvers[i], i+1)
-Base.getindex(batch::SameStructureBatchMPCSolver, i::Int) = batch.solvers[i]
+Base.length(batch_solver::SparseSameStructureBatchMPCSolver) = length(batch_solver.solvers)
+Base.iterate(batch_solver::SparseSameStructureBatchMPCSolver, i=1) = iterate(batch_solver.solvers)
+Base.getindex(batch_solver::SparseSameStructureBatchMPCSolver, i::Int) = batch_solver.solvers[i]
 
-function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, VT0 <: AbstractVector{T}, Model <: NLPModels.AbstractNLPModel{T, VT0}}
+function SparseSameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, VT0 <: AbstractVector{T}, Model <: NLPModels.AbstractNLPModel{T, VT0}}
     batch_size = length(nlps)
     batch_size == 0 && error("BatchMPCSolver requires at least one model")
 
@@ -201,16 +201,7 @@ function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, V
         )
     end
     
-    x_lr_batch = view(x_batch.values, ind_lb, :)
-    x_ur_batch = view(x_batch.values, ind_ub, :)
-    xl_r_batch = view(xl_batch.values, ind_lb, :)
-    xu_r_batch = view(xu_batch.values, ind_ub, :)
-    zl_r_batch = view(zl_batch.values, ind_lb, :)
-    zu_r_batch = view(zu_batch.values, ind_ub, :)
-    dx_lr_batch = view(d_batch.values, ind_lb, :)
-    dx_ur_batch = view(d_batch.values, ind_ub, :)
-    
-    batch = SameStructureBatchMPCSolver(
+    batch = SparseSameStructureBatchMPCSolver(
         nlps, batch_size, solvers,
         x_batch, zl_batch, zu_batch, xl_batch, xu_batch, f_batch,
         d_batch, p_batch, _w1_batch, _w2_batch,

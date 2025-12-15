@@ -1,7 +1,7 @@
 import MadIPM: is_done, is_factorized
 
 function MadIPM.batch_factorize_regularized_system!(
-    batch_solver::MadIPM.SameStructureBatchMPCSolver{T, KKTSystem, BK}
+    batch_solver::MadIPM.SparseSameStructureBatchMPCSolver{T, KKTSystem, BK}
 ) where {
     T,
     KKTSystem <: MadNLP.SparseKKTSystem,
@@ -19,7 +19,7 @@ function MadIPM.batch_factorize_regularized_system!(
 end
 
 function MadIPM.batch_solve_system!(
-    batch_solver::MadIPM.SameStructureBatchMPCSolver{T, KKTSystem, BK}
+    batch_solver::MadIPM.SparseSameStructureBatchMPCSolver{T, KKTSystem, BK}
 ) where {
     T,
     KKTSystem <: MadNLP.SparseKKTSystem,
