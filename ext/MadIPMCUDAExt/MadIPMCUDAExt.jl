@@ -9,12 +9,8 @@ using CUDA.CUSPARSE
 using KernelAbstractions
 import QuadraticModels: SparseMatrixCOO
 import MadIPM
-import MadNLP
-import MadNLPGPU
-import CUDSS
 
 include("cuda_wrapper.jl")
-include("cudss_uniform.jl")
 
 @kernel function _fill_sparse_structure!(rows, cols, Ap, Aj, Ax)
     i = @index(Global, Linear)

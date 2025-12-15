@@ -33,7 +33,6 @@ function simple_lp(; Avals=[1.0; 1.0])
     Hvals = Float64[]
     Arows = [1, 1]
     Acols = [1, 2]
-    # Avals = [1.0; 1.0]  
     c0 = 0.0
     lvar = [0.0; 0.0]
     uvar = [Inf; Inf]
@@ -242,7 +241,6 @@ end
 @testset "MathOptInterface" begin
     include("MOI_wrapper.jl")
 end
-
 
 if CUDA.functional()
     include("test_gpu.jl")
