@@ -24,8 +24,7 @@ function MadIPM.batch_solve_system!(
     T,
     KKTSystem <: MadNLP.SparseKKTSystem,
     BK <: MadIPM.SparseSameStructureBatchKKTSystem{T, KKTSystem, <:CUDSSUniformBatchSolver{T}},
-}   
-    @error "Batched solve"
+}
     for solver in batch_solver
         is_done(solver) && continue
         MadIPM._presolve_system!(solver)

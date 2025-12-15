@@ -40,10 +40,8 @@ function CUDSSUniformBatchSolver(
     end
 
     # The phase "analysis" is "reordering" combined with "symbolic_factorization"
-    @error "Construction" n nbatch nnz_per_batch length(nzVal)
     x_gpu = CUDSS.CudssMatrix(T, n; nbatch)
     b_gpu = CUDSS.CudssMatrix(T, n; nbatch)
-    @error "Batch Analysis call" typeof(solver) typeof(x_gpu) typeof(b_gpu)
     CUDSS.cudss("analysis", solver, x_gpu, b_gpu)
 
     if opt.cudss_ir > 0
@@ -59,13 +57,10 @@ function CUDSSUniformBatchSolver(
 end
 
 function MadNLP.factorize!(M::CUDSSUniformBatchSolver)
-    @error "Batch Factorize update" typeof(M.inner.matrix) typeof(M.nzVal) size(M.nzVal)
     CUDSS.cudss_update(M.inner.matrix, M.nzVal)
     if M.inner.fresh_factorization
-        @error "Batch Factorize call" typeof(M.inner) typeof(M.x_gpu) typeof(M.b_gpu)
         CUDSS.cudss("factorization", M.inner, M.x_gpu, M.b_gpu)
     else
-        @error "Batch Refactorize call" typeof(M.inner) typeof(M.x_gpu) typeof(M.b_gpu)
         CUDSS.cudss("refactorization", M.inner, M.x_gpu, M.b_gpu)
     end
     if !M.opt.cudss_hybrid_memory && !M.opt.cudss_hybrid_execute
@@ -75,11 +70,8 @@ function MadNLP.factorize!(M::CUDSSUniformBatchSolver)
 end
 
 function MadNLP.solve!(M::CUDSSUniformBatchSolver{T}, xb) where T
-    @error "Batch b update" typeof(M.b_gpu) typeof(xb) size(xb)
     CUDSS.cudss_update(M.b_gpu, xb)
-    @error "Batch x update" typeof(M.b_gpu) typeof(xb) size(xb)
     CUDSS.cudss_update(M.x_gpu, xb)
-    @error "Batch Solve call" typeof(M.inner) typeof(M.x_gpu) typeof(M.b_gpu)
     CUDSS.cudss("solve", M.inner, M.x_gpu, M.b_gpu, asynchronous=true)
     if !M.opt.cudss_hybrid_memory && !M.opt.cudss_hybrid_execute
         CUDA.synchronize()
