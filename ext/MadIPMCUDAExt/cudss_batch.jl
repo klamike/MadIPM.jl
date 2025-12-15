@@ -135,12 +135,9 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
     linear_solver::Type{<:MadNLPGPU.CUDSSSolver};
     opt_linear_solver=MadNLP.default_options(linear_solver),
 )
-    batch_size = batch_cb.batch_size
-    batch_size == 0 && error("SparseSameStructureBatchKKTSystem requires at least one callback")
-
     cb1 = batch_cb.callbacks[1]
-    T = eltype(cb1.con_buffer)
-    VT = typeof(cb1.con_buffer)
+    T = eltype(cb1.con_buffer)  # FIXME
+    VT = typeof(cb1.con_buffer)  # FIXME
 
     structure = MadNLP._build_sparsekkt_structure(cb1, ind_cons, MadNLP.ExactHessian)
     (; aug_mat_length) = structure
@@ -170,7 +167,7 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
         opt_linear_solver,
     )
 
-    KKTType = typeof(kkt_1)
+    KKTType = typeof(kkt_1)  # FIXME
     kkts = Vector{KKTType}(undef, batch_size)
     kkts[1] = kkt_1
 

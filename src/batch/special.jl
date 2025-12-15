@@ -2,7 +2,7 @@ function batch_evaluate_model!(batch_solver::SameStructureBatchMPCSolver)
     # TODO: use NLPModels.batch_*
     for solver in batch_solver
         is_done(solver) && continue
-        solver.obj_val[] = MadNLP.eval_f_wrapper(solver, solver.x)
+        solver.obj_val = MadNLP.eval_f_wrapper(solver, solver.x)
     end
 
     for solver in batch_solver
