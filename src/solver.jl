@@ -204,7 +204,7 @@ function update_termination_criteria!(solver::MadNLP.AbstractMadNLPSolver)
     solver.inf_compl = get_optimality_gap(solver) / max(1.0, solver.norm_c)
     solver.best_complementarity = min(solver.best_complementarity, solver.inf_compl)
     
-    if max(solver.inf_pr[], solver.inf_du[], solver.inf_compl[]) <= solver.opt.tol
+    if max(solver.inf_pr, solver.inf_du, solver.inf_compl) <= solver.opt.tol
         solver.status = MadNLP.SOLVE_SUCCEEDED
     elseif ((solver.inf_compl > solver.opt.divergence_tol * solver.best_complementarity) &&
             (dobj > max(10.0 * abs(solver.obj_val), 1.0)))
