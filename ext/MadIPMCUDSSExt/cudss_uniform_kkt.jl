@@ -57,7 +57,7 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
     aug_com, aug_csc_map = coo_to_csc(views.aug_raw)
     nnz_csc = length(aug_com.nzVal)
 
-    csc_nzVals = VT(undef, nnz_csc * batch_size)
+    aug_com.nzVal = csc_nzVals = VT(undef, nnz_csc * batch_size)
     fill!(csc_nzVals, zero(T))
 
     csc_nzVal_1 = MadNLP._madnlp_unsafe_wrap(csc_nzVals, nnz_csc, 1)
@@ -83,11 +83,7 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
         )
     end
 
-    batch_solver = CUDSSUniformBatchSolver(
-        aug_com, csc_nzVals,
-        batch_size;
-        opt=opt_linear_solver,
-    )
+    batch_solver = MadNLPGPU.CUDSSSolver(aug_com; opt=opt_linear_solver)
 
     return MadIPM.SparseSameStructureBatchKKTSystem(
         nzVals, aug_I, aug_J,

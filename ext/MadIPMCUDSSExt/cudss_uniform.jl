@@ -1,6 +1,5 @@
 import MadIPM: is_done, is_factorized
 
-include("cudss_uniform_solver.jl")
 include("cudss_uniform_kkt.jl")
 
 function MadIPM.batch_factorize_regularized_system!(
