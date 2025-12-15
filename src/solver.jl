@@ -3,15 +3,65 @@
     Initialization
 =#
 
-function init_starting_point!(solver::MadNLP.AbstractMadNLPSolver)
-    x = MadNLP.primal(solver.x)
-    l, u = solver.xl.values, solver.xu.values
-    lb, ub = solver.xl_r, solver.xu_r
-    zl, zu = solver.zl_r, solver.zu_r
-    xl, xu = solver.x_lr, solver.x_ur
-    # use jacl as a buffer
-    res = solver.jacl
+function initialize!(solver)
+    preinitialize!(solver)
+    init_starting_point_solve!(solver)
+    postinitialize!(solver)
+end
+function preinitialize!(solver::MadNLP.AbstractMadNLPSolver{T}) where T
+    opt = solver.opt
 
+    # Ensure the initial point is inside its bounds
+    MadNLP.initialize!(
+        solver.cb,
+        solver.x,
+        solver.xl,
+        solver.xu,
+        solver.y,
+        solver.rhs,
+        solver.ind_ineq;
+        tol=opt.bound_relax_factor,
+        bound_push=opt.bound_push,
+        bound_fac=opt.bound_fac,
+    )
+
+    fill!(solver.jacl, zero(T))
+
+    # Initializing scaling factors
+    # TODO: Implement Ruiz equilibration scaling here
+    if opt.scaling
+        MadNLP.set_scaling!(
+            solver.cb,
+            solver.x,
+            solver.xl,
+            solver.xu,
+            solver.y,
+            solver.rhs,
+            solver.ind_ineq,
+            T(100),
+        )
+    end
+
+    # Initializing KKT system
+    MadNLP.initialize!(solver.kkt)
+    init_regularization!(solver, solver.opt.regularization)
+
+    # Initializing callbacks
+    solver.obj_val = MadNLP.eval_f_wrapper(solver, solver.x)
+    MadNLP.eval_jac_wrapper!(solver, solver.kkt, solver.x)
+    MadNLP.eval_grad_f_wrapper!(solver, solver.f, solver.x)
+    MadNLP.eval_cons_wrapper!(solver, solver.c, solver.x)
+    MadNLP.eval_lag_hess_wrapper!(solver, solver.kkt, solver.x, solver.y)
+
+    # Normalization factors
+    solver.norm_b = norm(solver.rhs, Inf)
+    solver.norm_c = norm(MadNLP.primal(solver.f), Inf)
+
+    solver.status = MadNLP.REGULAR
+    return
+end
+function init_starting_point_solve!(solver::MadNLP.AbstractMadNLPSolver)
+    x = MadNLP.primal(solver.x)
     # Add initial primal-dual regularization
     solver.kkt.reg .= solver.del_w
     solver.kkt.pr_diag .= solver.del_w
@@ -30,6 +80,15 @@ function init_starting_point!(solver::MadNLP.AbstractMadNLPSolver)
     # Step 2: Compute initial dual variable as the least square solution of A' * y = -f
     set_initial_dual_rhs!(solver)
     solve_system!(solver)
+end
+function postinitialize!(solver)
+    x = MadNLP.primal(solver.x)
+    l, u = solver.xl.values, solver.xu.values
+    lb, ub = solver.xl_r, solver.xu_r
+    zl, zu = solver.zl_r, solver.zu_r
+    xl, xu = solver.x_lr, solver.x_ur
+    # use jacl as a buffer
+    res = solver.jacl
     solver.y .= MadNLP.dual(solver.d)
 
     # Step 3: init bounds multipliers using c + A' * y - zl + zu = 0
@@ -121,70 +180,14 @@ function init_starting_point!(solver::MadNLP.AbstractMadNLPSolver)
     @assert all(solver.zu_r .> 0.0)
     @assert all(solver.x_lr .> solver.xl_r)
     @assert all(solver.x_ur .< solver.xu_r)
-    return
-end
 
-function initialize!(solver::MadNLP.AbstractMadNLPSolver{T}) where T
-    opt = solver.opt
+    MadNLP.jtprod!(solver.jacl, solver.kkt, solver.y)
 
-    # Ensure the initial point is inside its bounds
-    MadNLP.initialize!(
-        solver.cb,
-        solver.x,
-        solver.xl,
-        solver.xu,
-        solver.y,
-        solver.rhs,
-        solver.ind_ineq;
-        tol=opt.bound_relax_factor,
-        bound_push=opt.bound_push,
-        bound_fac=opt.bound_fac,
-    )
-
-    fill!(solver.jacl, zero(T))
-
-    # Initializing scaling factors
-    # TODO: Implement Ruiz equilibration scaling here
-    if opt.scaling
-        MadNLP.set_scaling!(
-            solver.cb,
-            solver.x,
-            solver.xl,
-            solver.xu,
-            solver.y,
-            solver.rhs,
-            solver.ind_ineq,
-            T(100),
-        )
-    end
-
-    # Initializing KKT system
-    MadNLP.initialize!(solver.kkt)
-    init_regularization!(solver, solver.opt.regularization)
-
-    # Initializing callbacks
-    solver.obj_val = MadNLP.eval_f_wrapper(solver, solver.x)
-    MadNLP.eval_jac_wrapper!(solver, solver.kkt, solver.x)
-    MadNLP.eval_grad_f_wrapper!(solver, solver.f, solver.x)
-    MadNLP.eval_cons_wrapper!(solver, solver.c, solver.x)
-    MadNLP.eval_lag_hess_wrapper!(solver, solver.kkt, solver.x, solver.y)
-
-    # Normalization factors
-    solver.norm_b = norm(solver.rhs, Inf)
-    solver.norm_c = norm(MadNLP.primal(solver.f), Inf)
-
-    # Find initial position
-    init_starting_point!(solver)
-
-    solver.mu = opt.mu_init
+    solver.mu = solver.opt.mu_init
 
     solver.cnt.start_time = time()
 
     solver.best_complementarity = typemax(typeof(solver.best_complementarity))
-
-    solver.status = MadNLP.REGULAR
-
-    MadNLP.jtprod!(solver.jacl, solver.kkt, solver.y)
     return
 end
 

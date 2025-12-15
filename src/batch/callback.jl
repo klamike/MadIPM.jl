@@ -36,9 +36,6 @@ function init_samestructure_sparsecallback(
     hess_I = _alloc_batch_buffer(:hess_I, shared, nnzh, batch_size, VI, MI)
     hess_J = _alloc_batch_buffer(:hess_J, shared, nnzh, batch_size, VI, MI)
 
-    # NOTE: obj_scale uses CPU arrays to avoid scalar indexing
-    obj_scale = Vector{T}(undef, batch_size)
-    fill!(obj_scale, one(T))
     con_scale = _alloc_batch_buffer(:con_scale, shared, ncon, batch_size, VT, MT)
     jac_scale = _alloc_batch_buffer(:jac_scale, shared, nnzj, batch_size, VT, MT)
 
@@ -52,7 +49,7 @@ function init_samestructure_sparsecallback(
     NLPModels.jac_structure!(nlp1, jac_I, jac_J)
     NLPModels.hess_structure!(nlp1, hess_I, hess_J)
 
-    CBType = MadNLP.SparseCallback{T, VT, Vector{T}, Base.RefValue{T}, VI, Model, FH{VT,VI}, EH}
+    CBType = MadNLP.SparseCallback{T, VT, VI, Model, FH{VT,VI}, EH}
     callbacks = Vector{CBType}(undef, batch_size)
 
     for i in 1:batch_size
@@ -66,7 +63,7 @@ function init_samestructure_sparsecallback(
             _batch_view(jac_J,  :jac_J,  shared, nnzj, i, VI),
             _batch_view(hess_I, :hess_I, shared, nnzh, i, VI),
             _batch_view(hess_J, :hess_J, shared, nnzh, i, VI),
-            _scalar_view(obj_scale, i),
+            Ref(one(T)),
             _batch_view(con_scale, :con_scale, shared, ncon, i, VT),
             _batch_view(jac_scale, :jac_scale, shared, nnzj, i, VT);
             fixed_variable_treatment, equality_treatment,

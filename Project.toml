@@ -20,7 +20,8 @@ MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
 MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 
 [sources]
-MadNLP = {rev = "mk/batched", url = "git@github.com:klamike/MadNLP.jl.git"}
+MadNLP = {path = "../MadNLP.jl"}
+MadNLPGPU = {path = "../MadNLP.jl/lib/MadNLPGPU"}
 
 [extensions]
 MadIPMCUDAExt = ["CUDA", "KernelAbstractions", "MadNLPGPU"]
@@ -45,6 +46,7 @@ Test = "1.10"
 julia = "1.10"
 
 [extras]
+MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
 MadNLPTests = "b52a2a03-04ab-4a5f-9698-6a2deff93217"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 

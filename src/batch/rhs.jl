@@ -1,7 +1,7 @@
-struct BatchUnreducedKKTVector{T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}, VI}
+struct BatchUnreducedKKTVector{T, MT, VT<:AbstractVector{T}, VT2}
     values::MT
     views::Vector{VT}
-    primal_dual_view::SubArray{T, 2, MT, <:Tuple}
+    primal_dual_view::VT2
     primal_dual_buffer::VT
     n::Int
     m::Int
@@ -9,7 +9,7 @@ struct BatchUnreducedKKTVector{T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}, 
     nub::Int
 end
 
-function BatchUnreducedKKTVector(
+function init_batchunreduced_kktvector(
     ::Type{MT}, ::Type{VT}, n::Int, m::Int, nlb::Int, nub::Int, batch_size::Int, ind_lb, ind_ub
 ) where {T, MT <: AbstractMatrix{T}, VT <: AbstractVector{T}}
     values = MT(undef, n+m+nlb+nub, batch_size)
@@ -28,5 +28,5 @@ end
 MadNLP.primal_dual(buktv::BatchUnreducedKKTVector) = vec(buktv.primal_dual_view)
 
 function _unreduced_kkt_vector_view(batch::BatchUnreducedKKTVector, i::Int, ind_lb, ind_ub)
-    MadNLP.UnreducedKKTVector(batch.views[i], batch.n, batch.m, batch.nlb, batch.nub, ind_lb, ind_ub)
+    MadNLP.init_unreduced_kktvector(batch.views[i], batch.n, batch.m, batch.nlb, batch.nub, ind_lb, ind_ub)
 end

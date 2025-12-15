@@ -132,8 +132,26 @@ function batch_print_iter(batch_solver)
 end
 
 function batch_initialize!(batch_solver)
+    batch_preinitialize!(batch_solver)
+    batch_init_starting_point_solve!(batch_solver)
+    batch_postinitialize!(batch_solver)
+    return
+end
+function batch_preinitialize!(batch_solver)
     for solver in batch_solver
-        initialize!(solver)
+        preinitialize!(solver)
+    end
+    return
+end
+function batch_postinitialize!(batch_solver)
+    for solver in batch_solver
+        postinitialize!(solver)
+    end
+    return
+end
+function batch_init_starting_point_solve!(batch_solver)
+    for solver in batch_solver
+        init_starting_point_solve!(solver)
     end
     return
 end
@@ -182,12 +200,9 @@ end
 
 
 function madipm_batch(ms; kwargs...)
-    if isdefined(Main, :CUDSS)  # FIXME
-        solver = MadIPM.SparseSameStructureBatchMPCSolver(ms; kwargs...)
-        return MadIPM.batch_solve!(solver)
-    else
-        return madipm_foreach(ms; kwargs...)
-    end
+    # TODO: infer_best_batchmpcsolver
+    solver = MadIPM.SparseSameStructureBatchMPCSolver(ms; kwargs...)
+    return MadIPM.batch_solve!(solver)
 end
 
 function madipm_foreach(ms; kwargs...)

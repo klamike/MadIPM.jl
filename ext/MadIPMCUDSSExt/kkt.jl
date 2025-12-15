@@ -33,7 +33,7 @@ function _build_batch_kkt_element(
     )
 end
 
-function MadIPM.SparseSameStructureBatchKKTSystem(
+function MadIPM.init_samestructure_kktsystem(
     batch_cb::MadIPM.SparseBatchCallback{T,VT},
     ind_cons,
     linear_solver::Type{<:MadNLPGPU.CUDSSSolver};
@@ -48,13 +48,14 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
     aug_J = MadNLP.create_array(cb1, Int32, aug_mat_length)
     MadNLP.build_aug_indices!(aug_I, aug_J, structure)
 
+    batch_size = length(batch_cb.callbacks)
     nzVals = VT(undef, aug_mat_length * batch_size)
     fill!(nzVals, zero(T))
 
     # FIXME some extra work here
     V_1 = MadNLP._madnlp_unsafe_wrap(nzVals, aug_mat_length, 1)
-    views = _build_sparsekkt_views(VT, aug_I, aug_J, V_1, structure)
-    aug_com, aug_csc_map = coo_to_csc(views.aug_raw)
+    views = MadNLP._build_sparsekkt_views(VT, aug_I, aug_J, V_1, structure)
+    aug_com, aug_csc_map = MadNLP.coo_to_csc(views.aug_raw)
     nnz_csc = length(aug_com.nzVal)
 
     aug_com.nzVal = csc_nzVals = VT(undef, nnz_csc * batch_size)
@@ -88,6 +89,5 @@ function MadIPM.SparseSameStructureBatchKKTSystem(
     return MadIPM.SparseSameStructureBatchKKTSystem(
         nzVals, aug_I, aug_J,
         kkts, batch_solver,
-        aug_mat_length, batch_size,
     )
 end
