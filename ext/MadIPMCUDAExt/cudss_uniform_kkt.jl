@@ -5,7 +5,7 @@ function _build_batch_kkt_element(
     I::AbstractVector{Int32},
     J::AbstractVector{Int32},
     V::VT,
-    structure::MadNLP.SparseKKTStructure,
+    structure,
     aug_com_template::CUSPARSE.CuSparseMatrixCSC,
     aug_csc_map,
     csc_nzVal::VT
