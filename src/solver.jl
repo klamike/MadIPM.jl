@@ -23,13 +23,13 @@ function init_starting_point!(solver::MadNLP.AbstractMadNLPSolver)
     # Step 1: Compute initial primal variable as x0 = x + dx, with dx the
     #         least square solution of the system A * dx = (b - A*x)
     set_initial_primal_rhs!(solver)
-    solve_system!(solver.d, solver, solver.p)
+    solve_system!(solver)
     # x0 = x + dx
     axpy!(1.0, MadNLP.primal(solver.d), x)
 
     # Step 2: Compute initial dual variable as the least square solution of A' * y = -f
     set_initial_dual_rhs!(solver)
-    solve_system!(solver.d, solver, solver.p)
+    solve_system!(solver)
     solver.y .= MadNLP.dual(solver.d)
 
     # Step 3: init bounds multipliers using c + A' * y - zl + zu = 0
@@ -223,7 +223,7 @@ end
 
 function affine_direction!(solver::MadNLP.AbstractMadNLPSolver)
     set_predictive_rhs!(solver, solver.kkt)
-    solve_system!(solver.d, solver, solver.p)
+    solve_system!(solver)
     return
 end
 
@@ -237,7 +237,7 @@ end
 
 function mehrotra_correction_direction!(solver)
     set_correction_rhs!(solver, solver.kkt, solver.mu[], solver.correction_lb, solver.correction_ub, solver.ind_lb, solver.ind_ub)
-    solve_system!(solver.d, solver, solver.p)
+    solve_system!(solver)
     return
 end
 
@@ -280,7 +280,7 @@ function gondzio_correction_direction!(solver)
         )
         # Solve KKT linear system.
         copyto!(Δp, solver.d.values)
-        solve_system!(solver.d, solver, solver.p)
+        solve_system!(solver)
         hat_alpha_p, hat_alpha_d = get_fraction_to_boundary_step(solver, tau)
 
         # Stop extra correction if the stepsize does not increase sufficiently

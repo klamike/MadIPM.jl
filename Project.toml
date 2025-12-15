@@ -20,7 +20,7 @@ MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
 MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 
 [sources]
-MadNLP = {path = "../MadNLP.jl"}
+MadNLP = {rev = "mk/batched", url = "git@github.com:klamike/MadNLP.jl.git"}
 
 [extensions]
 MadIPMCUDAExt = ["CUDA", "CUDSS", "KernelAbstractions", "MadNLPGPU"]

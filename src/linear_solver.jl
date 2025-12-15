@@ -17,18 +17,16 @@ function factorize_regularized_system!(solver)
 end
 
 function _presolve_system!(
-    d::MadNLP.AbstractUnreducedKKTVector{T},
-    ::MadNLP.AbstractMadNLPSolver{T},
-    p::MadNLP.AbstractUnreducedKKTVector{T},
+    solver::MadNLP.AbstractMadNLPSolver{T},
 ) where T
-    copyto!(MadNLP.full(d), MadNLP.full(p))
+    copyto!(MadNLP.full(solver.d), MadNLP.full(solver.p))
 end
 
 function _postsolve_system!(
-    d::MadNLP.AbstractUnreducedKKTVector{T},
     solver::MadNLP.AbstractMadNLPSolver{T},
-    p::MadNLP.AbstractUnreducedKKTVector{T},
 ) where T
+    d = solver.d
+    p = solver.p
     # Check residual
     w = solver._w1
     copyto!(MadNLP.full(w), MadNLP.full(p))
@@ -42,17 +40,17 @@ function _postsolve_system!(
         @sprintf("Residual after linear solve: %6.2e", residual_ratio),
     )
     if isnan(residual_ratio) || (solver.opt.check_residual && (residual_ratio > solver.opt.tol_linear_solve))
+        @error "SolveException" residual_ratio
         throw(MadNLP.SolveException)
     end
 end
 
 function solve_system!(
-    d::MadNLP.AbstractUnreducedKKTVector{T},
     solver::MadNLP.AbstractMadNLPSolver{T},
-    p::MadNLP.AbstractUnreducedKKTVector{T},
 ) where T
-    _presolve_system!(d, solver, p)
-    MadNLP.solve!(solver.kkt, d)
-    _postsolve_system!(d, solver, p)
-    return d
+    @error "Unbatched solve"
+    _presolve_system!(solver)
+    MadNLP.solve!(solver.kkt, solver.d)
+    _postsolve_system!(solver)
+    return solver.d
 end

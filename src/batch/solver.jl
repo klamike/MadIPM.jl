@@ -16,18 +16,41 @@ function batch_update_termination_criteria!(batch_solver)
     end
     return all_done
 end
-function batch_factorize_system!(batch_solver)
+function batch_update_regularization!(batch_solver)
     for solver in batch_solver
         is_done(solver) && continue
-        factorize_system!(solver)
+        update_regularization!(solver, solver.opt.regularization)
+    end
+    return
+end
+function batch_factorize_regularized_system!(batch_solver)
+    for solver in batch_solver
+        is_done(solver) && continue
+        factorize_regularized_system!(solver)
+    end
+    return
+end
+function batch_factorize_system!(batch_solver)
+    batch_update_regularization!(batch_solver)
+    batch_factorize_regularized_system!(batch_solver)
+end
+
+function batch_set_predictive_rhs!(batch_solver)
+    for solver in batch_solver
+        is_done(solver) && continue
+        set_predictive_rhs!(solver, solver.kkt)
+    end
+end
+function batch_solve_system!(batch_solver)
+    for solver in batch_solver
+        is_done(solver) && continue
+        solve_system!(solver)
     end
     return
 end
 function batch_affine_direction!(batch_solver)
-    for solver in batch_solver
-        is_done(solver) && continue
-        affine_direction!(solver)
-    end
+    batch_set_predictive_rhs!(batch_solver)
+    batch_solve_system!(batch_solver)
     return
 end
 function batch_prediction_step_size!(batch_solver)
@@ -37,11 +60,16 @@ function batch_prediction_step_size!(batch_solver)
     end
     return
 end
-function batch_mehrotra_correction_direction!(batch_solver)
+function batch_set_correction_rhs!(batch_solver)
     for solver in batch_solver
         is_done(solver) && continue
-        mehrotra_correction_direction!(solver)
+        set_correction_rhs!(solver, solver.kkt, solver.mu[], solver.correction_lb, solver.correction_ub, solver.ind_lb, solver.ind_ub)
     end
+    return
+end
+function batch_mehrotra_correction_direction!(batch_solver)
+    batch_set_correction_rhs!(batch_solver)
+    batch_solve_system!(batch_solver)
     return
 end
 function batch_gondzio_correction_direction!(batch_solver)

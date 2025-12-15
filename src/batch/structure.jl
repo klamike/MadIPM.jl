@@ -37,21 +37,21 @@ mutable struct SameStructureBatchMPCSolver{
     correction_ub::MT
     rhs::MT
 
-    obj_val::VT
-    dobj_val::VT
-    inf_pr::VT
-    inf_du::VT
-    inf_compl::VT
-    norm_b::VT
-    norm_c::VT
-    mu::VT
-    alpha_p::VT
-    alpha_d::VT
-    del_w::VT
-    del_c::VT
-    best_complementarity::VT
-    mu_affine::VT
-    mu_curr::VT
+    obj_val::Vector{T}
+    dobj_val::Vector{T}
+    inf_pr::Vector{T}
+    inf_du::Vector{T}
+    inf_compl::Vector{T}
+    norm_b::Vector{T}
+    norm_c::Vector{T}
+    mu::Vector{T}
+    alpha_p::Vector{T}
+    alpha_d::Vector{T}
+    del_w::Vector{T}
+    del_c::Vector{T}
+    best_complementarity::Vector{T}
+    mu_affine::Vector{T}
+    mu_curr::Vector{T}
 
     opt::IPMOptions
     cnt::MadNLP.MadNLPCounters  # FIXME
@@ -153,22 +153,22 @@ function SameStructureBatchMPCSolver(nlps::Vector{Model}; kwargs...) where {T, V
     correction_ub_batch = MT(undef, nub, batch_size)
     rhs_batch = MT(undef, m, batch_size)
     
-    # batched scalar vectors
-    obj_val_batch = VT(undef, batch_size)
-    dobj_val_batch = VT(undef, batch_size)
-    inf_pr_batch = VT(undef, batch_size)
-    inf_du_batch = VT(undef, batch_size)
-    inf_compl_batch = VT(undef, batch_size)
-    norm_b_batch = VT(undef, batch_size)
-    norm_c_batch = VT(undef, batch_size)
-    mu_batch = VT(undef, batch_size)
-    alpha_p_batch = VT(undef, batch_size)
-    alpha_d_batch = VT(undef, batch_size)
-    del_w_batch = VT(undef, batch_size)
-    del_c_batch = VT(undef, batch_size)
-    best_complementarity_batch = VT(undef, batch_size)
-    mu_affine_batch = VT(undef, batch_size)
-    mu_curr_batch = VT(undef, batch_size)
+    # NOTE: using CPU arrays to avoid scalar indexing. in non-batched case, these are CPU floats
+    obj_val_batch = Vector{T}(undef, batch_size)
+    dobj_val_batch = Vector{T}(undef, batch_size)
+    inf_pr_batch = Vector{T}(undef, batch_size)
+    inf_du_batch = Vector{T}(undef, batch_size)
+    inf_compl_batch = Vector{T}(undef, batch_size)
+    norm_b_batch = Vector{T}(undef, batch_size)
+    norm_c_batch = Vector{T}(undef, batch_size)
+    mu_batch = Vector{T}(undef, batch_size)
+    alpha_p_batch = Vector{T}(undef, batch_size)
+    alpha_d_batch = Vector{T}(undef, batch_size)
+    del_w_batch = Vector{T}(undef, batch_size)
+    del_c_batch = Vector{T}(undef, batch_size)
+    best_complementarity_batch = Vector{T}(undef, batch_size)
+    mu_affine_batch = Vector{T}(undef, batch_size)
+    mu_curr_batch = Vector{T}(undef, batch_size)
     
     bcnt = MadNLP.MadNLPCounters(start_time=time())
     batch_cb = SparseBatchCallback(MT, VT, VI, nlps;

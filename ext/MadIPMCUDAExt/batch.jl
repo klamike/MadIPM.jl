@@ -1,8 +1,6 @@
 import MadIPM: is_done, is_factorized
 
-
-
-function MadIPM.batch_affine_direction!(
+function MadIPM.batch_factorize_regularized_system!(
     batch_solver::MadIPM.SameStructureBatchMPCSolver{T, Ts, MT, VT, VI, KKTSystem, BK}
 ) where {
     T, Ts, MT, VT, VI,
@@ -11,7 +9,28 @@ function MadIPM.batch_affine_direction!(
 }
     for solver in batch_solver
         is_done(solver) && continue
-        MadIPM.set_predictive_rhs!(solver, solver.kkt)
+        MadIPM.set_aug_diagonal_reg!(solver.kkt, solver)
+        # MadNLP.@trace(solver.logger,"Factorization started.")
+        MadNLP.build_kkt!(solver.kkt)
+        # solver.cnt.linear_solver_time += @elapsed begin
+        #     MadNLP.factorize!(solver.kkt.linear_solver)
+        # end
+    end
+    MadNLP.factorize!(batch_solver.kkts.batch_solver)
+    return
+end
+
+function MadIPM.batch_solve_system!(
+    batch_solver::MadIPM.SameStructureBatchMPCSolver{T, Ts, MT, VT, VI, KKTSystem, BK}
+) where {
+    T, Ts, MT, VT, VI,
+    KKTSystem <: MadNLP.SparseKKTSystem,
+    BK <: MadIPM.SparseSameStructureBatchKKTSystem{T, <:AbstractVector{T}, <:AbstractVector{Int32}, KKTSystem, <:CUDSSUniformBatchSolver{T}},
+}   
+    @error "Batched solve"
+    for solver in batch_solver
+        is_done(solver) && continue
+        MadIPM._presolve_system!(solver)
         MadNLP.reduce_rhs!(solver.kkt, solver.d)
     end
 
@@ -23,6 +42,7 @@ function MadIPM.batch_affine_direction!(
     for solver in batch_solver
         is_done(solver) && continue
         MadNLP.finish_aug_solve!(solver.kkt, solver.d)
+        MadIPM._postsolve_system!(solver)
     end
     return
 end

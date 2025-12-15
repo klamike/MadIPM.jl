@@ -15,6 +15,7 @@ using MadNLPGPU
             linear_solver=MadNLPGPU.CUDSSSolver,
             cudss_algorithm=algo,
             print_level=MadNLP.ERROR,
+            rethrow_error=true,
         )
         results = MadIPM.solve!(solver)
         @test results.status == MadNLP.SOLVE_SUCCEEDED
@@ -36,7 +37,8 @@ end
             qp_gpu;
             linear_solver=MadNLPGPU.CUDSSSolver,
             cudss_algorithm=MadNLP.LDL,
-            print_level=MadNLP.ERROR,
+            print_level=MadNLP.DEBUG,
+            rethrow_error=true,
         )
         individual_stats[i] = MadIPM.solve!(solver)
         @test individual_stats[i].status == MadNLP.SOLVE_SUCCEEDED
@@ -46,7 +48,8 @@ end
         qps_gpu;
         linear_solver=MadNLPGPU.CUDSSSolver,
         cudss_algorithm=MadNLP.LDL,
-        print_level=MadNLP.ERROR,
+        print_level=MadNLP.DEBUG,
+        rethrow_error=true,
     )
     @test length(batch_stats) == n_batch
     for i in 1:n_batch

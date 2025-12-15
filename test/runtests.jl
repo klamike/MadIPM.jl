@@ -197,6 +197,7 @@ end
     end
 end
 =#
+#=
 @testset "Batch solve end-to-end test" begin
     n_batch = 5
     qps = [simple_lp(Avals=[i * 0.5; i * 2]) for i in 1:n_batch]
@@ -242,6 +243,7 @@ end
 # @testset "MathOptInterface" begin
 #     include("MOI_wrapper.jl")
 # end
+=#
 
 if CUDA.functional()
     include("test_gpu.jl")

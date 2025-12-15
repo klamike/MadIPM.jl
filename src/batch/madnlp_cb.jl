@@ -104,7 +104,9 @@ function SparseBatchCallback(
     hess_I = :hess_I in shared ? VI(undef, nnzh) : MI(undef, nnzh, batch_size)
     hess_J = :hess_J in shared ? VI(undef, nnzh) : MI(undef, nnzh, batch_size)
 
-    obj_scale = VT(undef, batch_size)
+    # NOTE: using CPU arrays to avoid scalar indexing. in non-batched case, these are CPU floats
+    # FIXME: redundant with BatchMPCSolver.obj_scale?
+    obj_scale = Vector{T}(undef, batch_size)
     fill!(obj_scale, one(T))
     obj_sign = Ref(NLPModels.get_minimize(nlp1) ? one(T) : -one(T))  # NOTE: assumes shared nlp.meta.minimize
     con_scale = :con_scale in shared ? VT(undef, ncon) : MT(undef, ncon, batch_size)
@@ -124,7 +126,8 @@ function SparseBatchCallback(
         NLPModels.hess_structure!(nlp1, hess_I, hess_J)
     end
 
-    CBType = MadNLP.SparseCallback{T, VT, VT, Base.RefValue{T}, VI, Model, FH{VT,VI}, EH}
+    # Note: Ts (obj_scale type) is Vector{T} (CPU) to avoid scalar indexing
+    CBType = MadNLP.SparseCallback{T, VT, Vector{T}, Base.RefValue{T}, VI, Model, FH{VT,VI}, EH}
     callbacks = Vector{CBType}(undef, batch_size)
 
     for i in 1:batch_size
