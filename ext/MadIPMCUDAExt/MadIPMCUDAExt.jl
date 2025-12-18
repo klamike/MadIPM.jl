@@ -10,6 +10,11 @@ using KernelAbstractions
 import QuadraticModels: SparseMatrixCOO
 import MadIPM
 
+
+using NVTX
+
+
+
 include("cuda_wrapper.jl")
 include("operators.jl")
 

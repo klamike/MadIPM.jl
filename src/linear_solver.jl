@@ -5,7 +5,7 @@
 
 MadNLP.build_kkt!(solver::MadIPM.MPCSolver) = MadNLP.build_kkt!(solver.kkt)
 set_aug_diagonal_reg!(solver) = set_aug_diagonal_reg!(solver.kkt, solver)
-function factorize_regularized_system!(solver)
+NVTX.@annotate function factorize_regularized_system!(solver)
     max_trials = 3
     for ntrial in 1:max_trials
         set_aug_diagonal_reg!(solver)
@@ -18,7 +18,7 @@ function factorize_regularized_system!(solver)
     end
 end
 
-function solve_system!(
+NVTX.@annotate function solve_system!(
     d::MadNLP.UnreducedKKTVector{T},
     solver::MadNLP.AbstractMadNLPSolver{T},
     p::MadNLP.UnreducedKKTVector{T},
@@ -29,7 +29,7 @@ function solve_system!(
     return d
 end
 
-function post_solve!(d::MadNLP.UnreducedKKTVector{T}, solver, p) where T
+NVTX.@annotate function post_solve!(d::MadNLP.UnreducedKKTVector{T}, solver, p) where T
     opt = solver.opt
 
     # Check residual
