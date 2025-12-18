@@ -76,7 +76,7 @@ mutable struct MPCSolver{
     status::MadNLP.Status
 end
 
-function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, VT}
+NVTX.@annotate function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, VT}
     options = load_options(nlp; kwargs...)
 
     ipm_opt = options.interior_point
@@ -177,7 +177,7 @@ function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, V
     )
 end
 
-function MadNLP.print_iter(solver::MPCSolver; options...)
+NVTX.@annotate function MadNLP.print_iter(solver::MPCSolver; options...)
     obj_scale = solver.cb.obj_scale[]
     mod(solver.cnt.k,10)==0&& MadNLP.@info(solver.logger,@sprintf(
         "iter    objective    inf_pr   inf_du lg(mu)  ||d||  lg(rg) alpha_du alpha_pr"))
@@ -195,4 +195,3 @@ function MadNLP.print_iter(solver::MPCSolver; options...)
         solver.alpha_d,solver.alpha_p))
     return
 end
-

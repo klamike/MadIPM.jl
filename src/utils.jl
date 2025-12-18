@@ -51,13 +51,13 @@ end
     Utils for linear solvers
 =#
 
-function is_factorized(::MadNLP.AbstractLinearSolver)
+NVTX.@annotate function is_factorized(::MadNLP.AbstractLinearSolver)
     return true # assume the system is factorized by default
 end
-function is_factorized(lin_solver::MadNLP.LDLSolver)
+NVTX.@annotate function is_factorized(lin_solver::MadNLP.LDLSolver)
     return LDLFactorizations.factorized(lin_solver.inner)
 end
-function is_factorized(lin_solver::MadNLP.CHOLMODSolver)
+NVTX.@annotate function is_factorized(lin_solver::MadNLP.CHOLMODSolver)
     return issuccess(lin_solver.inner)
 end
 
@@ -105,7 +105,7 @@ end
 end
 
 # smart option presets
-function IPMOptions(
+NVTX.@annotate function IPMOptions(
     nlp::NLPModels.AbstractNLPModel{T};
     kkt_system =  MadNLP.SparseKKTSystem,
     linear_solver =  MadNLP.default_sparse_solver(nlp),
@@ -118,7 +118,7 @@ function IPMOptions(
     )
 end
 
-function load_options(nlp; options...)
+NVTX.@annotate function load_options(nlp; options...)
     primary_opt, options = MadNLP._get_primary_options(options)
 
     # Initiate interior-point options
@@ -147,7 +147,7 @@ function load_options(nlp; options...)
     )
 end
 
-function update_solution!(stats::MadNLP.MadNLPExecutionStats{T}, solver) where T
+NVTX.@annotate function update_solution!(stats::MadNLP.MadNLPExecutionStats{T}, solver) where T
     MadNLP.update!(stats,solver)
     if !NLPModels.get_minimize(solver.nlp)
         stats.objective *= -one(T)
@@ -155,7 +155,7 @@ function update_solution!(stats::MadNLP.MadNLPExecutionStats{T}, solver) where T
     return
 end
 
-function coo_to_csr(
+NVTX.@annotate function coo_to_csr(
     n_rows,
     n_cols,
     Ai::AbstractVector{Ti},
@@ -200,13 +200,13 @@ function coo_to_csr(
     return (Bp, Bj, Bx)
 end
 
-function coo_to_csr(A::MadNLP.SparseMatrixCOO)
+NVTX.@annotate function coo_to_csr(A::MadNLP.SparseMatrixCOO)
     return coo_to_csr(
         A.m, A.n, A.I, A.J, A.V,
     )
 end
 
-function build_normal_system(
+NVTX.@annotate function build_normal_system(
     n_rows,
     n_cols,
     Jtp::AbstractVector{Ti},
@@ -273,7 +273,7 @@ function build_normal_system(
     return (Cp, Cj)
 end
 
-function assemble_normal_system!(
+NVTX.@annotate function assemble_normal_system!(
     n_rows,
     n_cols,
     Jtp::AbstractVector{Ti},
@@ -324,7 +324,7 @@ a new QuadraticModel if flag is `true`.
 
 If `flag` is `false`, the initial `qp` is returned.
 """
-function presolve_qp(qp::QuadraticModels.QuadraticModel)
+NVTX.@annotate function presolve_qp(qp::QuadraticModels.QuadraticModel)
     # Use routine implemented in QuadraticModels
     res = QuadraticModels.presolve(qp)
     qp_presolved = res.solver_specific[:presolvedQM]
@@ -370,7 +370,7 @@ min_{x,s,w}  c'x
 ```
 Equality constraints are preserved as-is.
 """
-function standard_form_qp(qp::QuadraticModels.QuadraticModel)
+NVTX.@annotate function standard_form_qp(qp::QuadraticModels.QuadraticModel)
     n = NLPModels.get_nvar(qp)
     m = NLPModels.get_ncon(qp)
 

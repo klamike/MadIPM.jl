@@ -10,6 +10,11 @@ using KernelAbstractions
 import QuadraticModels: SparseMatrixCOO
 import MadIPM
 
+
+using NVTX
+
+
+
 include("cuda_wrapper.jl")
 
 @kernel function _fill_sparse_structure!(rows, cols, Ap, Aj, Ax)

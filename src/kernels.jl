@@ -1,4 +1,4 @@
-function set_initial_primal_rhs!(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function set_initial_primal_rhs!(solver::MadNLP.AbstractMadNLPSolver)
     p = solver.p
     fill!(full(p), 0.0)
     py = MadNLP.dual(p)
@@ -8,7 +8,7 @@ function set_initial_primal_rhs!(solver::MadNLP.AbstractMadNLPSolver)
     return
 end
 
-function set_initial_dual_rhs!(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function set_initial_dual_rhs!(solver::MadNLP.AbstractMadNLPSolver)
     p = solver.p
     fill!(full(p), 0.0)
     px = MadNLP.primal(p)
@@ -18,7 +18,7 @@ function set_initial_dual_rhs!(solver::MadNLP.AbstractMadNLPSolver)
     return
 end
 
-function set_predictive_rhs!(solver::MadNLP.AbstractMadNLPSolver, kkt::MadNLP.AbstractKKTSystem)
+NVTX.@annotate function set_predictive_rhs!(solver::MadNLP.AbstractMadNLPSolver, kkt::MadNLP.AbstractKKTSystem)
     # RHS
     px = MadNLP.primal(solver.p)
     py = MadNLP.dual(solver.p)
@@ -40,7 +40,7 @@ function set_predictive_rhs!(solver::MadNLP.AbstractMadNLPSolver, kkt::MadNLP.Ab
     return
 end
 
-function set_correction_rhs!(solver::MadNLP.AbstractMadNLPSolver, kkt::MadNLP.AbstractKKTSystem, mu::Float64, correction_lb::AbstractVector{Float64}, correction_ub::AbstractVector{Float64}, ind_lb, ind_ub)
+NVTX.@annotate function set_correction_rhs!(solver::MadNLP.AbstractMadNLPSolver, kkt::MadNLP.AbstractKKTSystem, mu::Float64, correction_lb::AbstractVector{Float64}, correction_ub::AbstractVector{Float64}, ind_lb, ind_ub)
     px = MadNLP.primal(solver.p)
     py = MadNLP.dual(solver.p)
     pzl = MadNLP.dual_lb(solver.p)
@@ -57,7 +57,7 @@ function set_correction_rhs!(solver::MadNLP.AbstractMadNLPSolver, kkt::MadNLP.Ab
     return
 end
 
-function get_correction!(
+NVTX.@annotate function get_correction!(
     solver::MadNLP.AbstractMadNLPSolver,
     correction_lb,
     correction_ub,
@@ -71,7 +71,7 @@ function get_correction!(
 end
 
 # Gondzio's multi-correction scheme
-function set_extra_correction!(
+NVTX.@annotate function set_extra_correction!(
     solver::MadNLP.AbstractMadNLPSolver,
     correction_lb, correction_ub,
     alpha_p, alpha_d, βmin, βmax, μ,
@@ -121,7 +121,7 @@ function set_extra_correction!(
     return
 end
 
-function set_aug_diagonal_reg!(kkt::MadNLP.AbstractKKTSystem{T}, solver::MadNLP.AbstractMadNLPSolver{T}) where T
+NVTX.@annotate function set_aug_diagonal_reg!(kkt::MadNLP.AbstractKKTSystem{T}, solver::MadNLP.AbstractMadNLPSolver{T}) where T
     fill!(kkt.reg, solver.del_w)
     fill!(kkt.du_diag, solver.del_c)
     kkt.l_diag .= solver.xl_r .- solver.x_lr   # (Xˡ - X)
@@ -136,7 +136,7 @@ function set_aug_diagonal_reg!(kkt::MadNLP.AbstractKKTSystem{T}, solver::MadNLP.
 end
 
 # Special function for ScaledSparseKKTSystem to ensure coefficients are positive
-function set_aug_diagonal_reg!(kkt::MadNLP.ScaledSparseKKTSystem{T}, solver::MadNLP.AbstractMadNLPSolver{T}) where T
+NVTX.@annotate function set_aug_diagonal_reg!(kkt::MadNLP.ScaledSparseKKTSystem{T}, solver::MadNLP.AbstractMadNLPSolver{T}) where T
     fill!(kkt.reg, solver.del_w)
     fill!(kkt.du_diag, solver.del_c)
     kkt.l_diag .= solver.x_lr .- solver.xl_r   # (X - Xˡ)
@@ -152,7 +152,7 @@ end
     Barrier
 =#
 
-function get_complementarity_measure(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function get_complementarity_measure(solver::MadNLP.AbstractMadNLPSolver)
     m1, m2 = length(solver.x_lr), length(solver.x_ur)
     if m1 + m2 == 0
         return 0.0
@@ -173,7 +173,7 @@ function get_complementarity_measure(solver::MadNLP.AbstractMadNLPSolver)
     end
 end
 
-function get_affine_complementarity_measure(solver::MadNLP.AbstractMadNLPSolver, alpha_p, alpha_d)
+NVTX.@annotate function get_affine_complementarity_measure(solver::MadNLP.AbstractMadNLPSolver, alpha_p, alpha_d)
     m1, m2 = length(solver.x_lr), length(solver.x_ur)
     if m1 + m2 == 0
         return 0.0
@@ -207,7 +207,7 @@ function get_affine_complementarity_measure(solver::MadNLP.AbstractMadNLPSolver,
     end
 end
 
-function update_barrier!(rule::Mehrotra, solver, mu_affine)
+NVTX.@annotate function update_barrier!(rule::Mehrotra, solver, mu_affine)
     has_inequalities = (length(solver.ind_llb) + length(solver.ind_uub)) > 0
     mu_curr = get_complementarity_measure(solver)             # μ = y' s / m
     sigma = if has_inequalities
@@ -223,7 +223,7 @@ end
     Step
 =#
 
-function get_alpha_max_primal(xl, xlb, xu, xub, dxl, dxu, tau)
+NVTX.@annotate function get_alpha_max_primal(xl, xlb, xu, xub, dxl, dxu, tau)
     alpha_xl, iblock_l = mapreduce(
       (dxl, xlb, xl, i) -> begin
         val = (dxl < 0) ? (-xl + xlb) * tau / dxl : Inf
@@ -247,7 +247,7 @@ function get_alpha_max_primal(xl, xlb, xu, xub, dxl, dxu, tau)
     return alpha_xl, alpha_xu, iblock_l, iblock_u
 end
 
-function get_alpha_max_dual(zl_r, zu_r, dzl, dzu, tau)
+NVTX.@annotate function get_alpha_max_dual(zl_r, zu_r, dzl, dzu, tau)
     alpha_zl, iblock_l = mapreduce(
       (dzl, zl_r, i) -> begin
         val = (dzl < 0) ? (-zl_r) * tau / dzl : Inf
@@ -271,7 +271,7 @@ function get_alpha_max_dual(zl_r, zu_r, dzl, dzu, tau)
     return alpha_zl, alpha_zu, iblock_l, iblock_u
 end
 
-function get_fraction_to_boundary_step(solver, tau)
+NVTX.@annotate function get_fraction_to_boundary_step(solver, tau)
     alpha_xl, alpha_xu, _ = get_alpha_max_primal(
         solver.x_lr, solver.xl_r,
         solver.x_ur, solver.xu_r,
@@ -288,7 +288,7 @@ function get_fraction_to_boundary_step(solver, tau)
     return min(alpha_xl, alpha_xu), min(alpha_zl, alpha_zu)
 end
 
-function update_step!(rule::ConservativeStep, solver)
+NVTX.@annotate function update_step!(rule::ConservativeStep, solver)
     alpha_p, alpha_d = get_fraction_to_boundary_step(solver, rule.tau)
     solver.alpha_p = alpha_p
     solver.alpha_d = alpha_d
@@ -296,7 +296,7 @@ function update_step!(rule::ConservativeStep, solver)
 end
 
 # Implement conservative rule for QP
-function update_step!(rule::AdaptiveStep, solver)
+NVTX.@annotate function update_step!(rule::AdaptiveStep, solver)
     tau = max(1-solver.mu, rule.tau_min)
     alpha_p, alpha_d = get_fraction_to_boundary_step(solver, tau)
     solver.alpha_p = alpha_p
@@ -306,7 +306,7 @@ end
 
 # Implement Mehrotra's heuristic to compute the step : see Procedure GTSF (Exhibit 6.1) in
 # "On The Implementation Of A Primal-Dual Interior Point Method"
-function update_step!(rule::MehrotraAdaptiveStep, solver)
+NVTX.@annotate function update_step!(rule::MehrotraAdaptiveStep, solver)
     gamma_a = 1.0 / (1.0 - rule.gamma_f)
     tau = 1.0
 
@@ -361,37 +361,37 @@ end
     Regularization
 =#
 
-function init_regularization!(solver::MPCSolver, ::NoRegularization)
+NVTX.@annotate function init_regularization!(solver::MPCSolver, ::NoRegularization)
     solver.del_w = 1.0
     solver.del_c = 0.0
     return
 end
 
-function update_regularization!(solver::MPCSolver, ::NoRegularization)
+NVTX.@annotate function update_regularization!(solver::MPCSolver, ::NoRegularization)
     solver.del_w = 0.0
     solver.del_c = 0.0
     return
 end
 
-function init_regularization!(solver::MPCSolver, reg::FixedRegularization)
+NVTX.@annotate function init_regularization!(solver::MPCSolver, reg::FixedRegularization)
     solver.del_w = 1.0
     solver.del_c = reg.delta_d
     return
 end
 
-function update_regularization!(solver::MPCSolver, reg::FixedRegularization)
+NVTX.@annotate function update_regularization!(solver::MPCSolver, reg::FixedRegularization)
     solver.del_w = reg.delta_p
     solver.del_c = reg.delta_d
     return
 end
 
-function init_regularization!(solver::MPCSolver, reg::AdaptiveRegularization)
+NVTX.@annotate function init_regularization!(solver::MPCSolver, reg::AdaptiveRegularization)
     solver.del_w = 1.0
     solver.del_c = reg.delta_d
     return
 end
 
-function update_regularization!(solver::MPCSolver, reg::AdaptiveRegularization)
+NVTX.@annotate function update_regularization!(solver::MPCSolver, reg::AdaptiveRegularization)
     reg.delta_p = max(reg.delta_p / 10.0, reg.delta_min)
     # Dual regularization is negative!
     reg.delta_d = min(reg.delta_d / 10.0, -reg.delta_min)
@@ -405,7 +405,7 @@ end
 =#
 
 # Dual objective
-function dual_objective(solver::MPCSolver)
+NVTX.@annotate function dual_objective(solver::MPCSolver)
     dobj = -dot(solver.y, solver.rhs)
     if length(solver.xl_r) > 0
         dobj += dot(solver.zl_r, solver.xl_r)
@@ -416,7 +416,7 @@ function dual_objective(solver::MPCSolver)
     return dobj
 end
 
-function get_optimality_gap(solver::MPCSolver)
+NVTX.@annotate function get_optimality_gap(solver::MPCSolver)
     return MadNLP.get_inf_compl(
         solver.x_lr,
         solver.xl_r,

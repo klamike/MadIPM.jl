@@ -2,12 +2,12 @@
 #=
     Initialization
 =#
-function set_initial_regularization!(solver)
+NVTX.@annotate function set_initial_regularization!(solver)
     solver.kkt.reg .= solver.del_w
     solver.kkt.pr_diag .= solver.del_w
     solver.kkt.du_diag .= solver.del_c
 end
-function init_starting_point_solve!(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function init_starting_point_solve!(solver::MadNLP.AbstractMadNLPSolver)
     # Add initial primal-dual regularization
     set_initial_regularization!(solver)
 
@@ -25,7 +25,7 @@ function init_starting_point_solve!(solver::MadNLP.AbstractMadNLPSolver)
     set_initial_dual_rhs!(solver)
     solve_system!(solver)
 end
-function post_initialize!(solver)
+NVTX.@annotate function post_initialize!(solver)
     x = MadNLP.primal(solver.x)
     l, u = solver.xl.values, solver.xu.values
     lb, ub = solver.xl_r, solver.xu_r
@@ -137,7 +137,7 @@ function post_initialize!(solver)
 end
 
 update_jacl!(solver) = MadNLP.jtprod!(solver.jacl, solver.kkt, solver.y)
-function pre_initialize!(solver::MadNLP.AbstractMadNLPSolver{T}) where T
+NVTX.@annotate function pre_initialize!(solver::MadNLP.AbstractMadNLPSolver{T}) where T
     opt = solver.opt
 
     # Ensure the initial point is inside its bounds
@@ -188,7 +188,7 @@ function pre_initialize!(solver::MadNLP.AbstractMadNLPSolver{T}) where T
 
     return
 end
-function initialize!(solver)
+NVTX.@annotate function initialize!(solver)
     pre_initialize!(solver)
     init_starting_point_solve!(solver)
     post_initialize!(solver)
@@ -198,7 +198,7 @@ end
 #=
     MPC Algorithm
 =#
-function update_termination_criteria!(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function update_termination_criteria!(solver::MadNLP.AbstractMadNLPSolver)
     dobj = dual_objective(solver) # dual objective
     solver.inf_pr = MadNLP.get_inf_pr(solver.c) / max(1.0, solver.norm_b)
     solver.inf_du = MadNLP.get_inf_du(
@@ -228,7 +228,7 @@ function update_termination_criteria!(solver::MadNLP.AbstractMadNLPSolver)
     return
 end
 
-function prediction_step_size!(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function prediction_step_size!(solver::MadNLP.AbstractMadNLPSolver)
     alpha_aff_p, alpha_aff_d = get_fraction_to_boundary_step(solver, 1.0)
     mu_affine = get_affine_complementarity_measure(solver, alpha_aff_p, alpha_aff_d)
     get_correction!(solver, solver.correction_lb, solver.correction_ub)
@@ -236,7 +236,7 @@ function prediction_step_size!(solver::MadNLP.AbstractMadNLPSolver)
     return
 end
 
-function gondzio_correction_direction!(solver)
+NVTX.@annotate function gondzio_correction_direction!(solver)
     solver.opt.max_ncorr ≤ 0 && return
 
     δ = 0.1
@@ -297,11 +297,11 @@ set_predictive_rhs!(solver) = set_predictive_rhs!(solver, solver.kkt)
 set_correction_rhs!(solver) = set_correction_rhs!(solver, solver.kkt, solver.mu[], solver.correction_lb, solver.correction_ub, solver.ind_lb, solver.ind_ub)
 solve_system!(solver) = solve_system!(solver.d, solver, solver.p)
 
-function update_step_size!(solver)
+NVTX.@annotate function update_step_size!(solver)
     update_step!(solver.opt.step_rule, solver)
     return
 end
-function apply_step!(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function apply_step!(solver::MadNLP.AbstractMadNLPSolver)
     axpy!(solver.alpha_p, MadNLP.primal(solver.d), MadNLP.primal(solver.x))
     axpy!(solver.alpha_d, MadNLP.dual(solver.d), solver.y)
     solver.zl_r .+= solver.alpha_d .* MadNLP.dual_lb(solver.d)
@@ -312,19 +312,19 @@ function apply_step!(solver::MadNLP.AbstractMadNLPSolver)
     return
 end
 
-function evaluate_model!(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function evaluate_model!(solver::MadNLP.AbstractMadNLPSolver)
     solver.obj_val = MadNLP.eval_f_wrapper(solver, solver.x)
     MadNLP.eval_cons_wrapper!(solver, solver.c, solver.x)
     MadNLP.eval_grad_f_wrapper!(solver, solver.f, solver.x)
     update_jacl!(solver)
     return
 end
-function is_done(solver)
+NVTX.@annotate function is_done(solver)
     return solver.status != MadNLP.REGULAR && solver.status != MadNLP.INITIAL
 end
 
 # Predictor-corrector method
-function mpc!(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function mpc!(solver::MadNLP.AbstractMadNLPSolver)
     while true
         # Check termination criteria
         MadNLP.print_iter(solver)
@@ -360,7 +360,7 @@ function mpc!(solver::MadNLP.AbstractMadNLPSolver)
     end
 end
 
-function solve!(solver::MadNLP.AbstractMadNLPSolver)
+NVTX.@annotate function solve!(solver::MadNLP.AbstractMadNLPSolver)
     stats = MadNLP.MadNLPExecutionStats(solver)
 
     try
@@ -401,7 +401,7 @@ function solve!(solver::MadNLP.AbstractMadNLPSolver)
 
     return stats
 end
-function finalize!(stats, solver)
+NVTX.@annotate function finalize!(stats, solver)
     solver.cnt.total_time = time() - solver.cnt.start_time
     if !(solver.status < MadNLP.SOLVE_SUCCEEDED)
         MadNLP.print_summary(solver)
@@ -417,7 +417,7 @@ end
 
 Solve the model `m` using the MadIPM solver.
 """
-function madipm(m; kwargs...)
+NVTX.@annotate function madipm(m; kwargs...)
     solver = MadIPM.MPCSolver(m; kwargs...)
     return MadIPM.solve!(solver)
 end

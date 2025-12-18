@@ -26,7 +26,7 @@ struct NormalKKTSystem{T, VT, MT, VI, VI32, LS} <: MadNLP.AbstractKKTSystem{T, V
     m::Int
 end
 
-function MadNLP.create_kkt_system(
+NVTX.@annotate function MadNLP.create_kkt_system(
     ::Type{NormalKKTSystem},
     cb::MadNLP.SparseCallback{T,VT},
     ind_cons,
@@ -143,11 +143,11 @@ MadNLP.num_variables(kkt::NormalKKTSystem) = length(kkt.pr_diag)
 MadNLP.get_jacobian(kkt::NormalKKTSystem) = kkt.jac
 MadNLP.get_hessian(kkt::NormalKKTSystem) = Float64[]
 
-function MadNLP.is_inertia_correct(kkt::NormalKKTSystem, num_pos, num_zero, num_neg)
+NVTX.@annotate function MadNLP.is_inertia_correct(kkt::NormalKKTSystem, num_pos, num_zero, num_neg)
     return (num_zero == 0) && (num_pos == kkt.m)
 end
 
-function MadNLP.initialize!(kkt::NormalKKTSystem{T}) where T
+NVTX.@annotate function MadNLP.initialize!(kkt::NormalKKTSystem{T}) where T
     fill!(kkt.reg, one(T))
     fill!(kkt.pr_diag, one(T))
     fill!(kkt.du_diag, zero(T))
@@ -160,7 +160,7 @@ function MadNLP.initialize!(kkt::NormalKKTSystem{T}) where T
     return
 end
 
-function MadNLP.compress_jacobian!(kkt::NormalKKTSystem)
+NVTX.@annotate function MadNLP.compress_jacobian!(kkt::NormalKKTSystem)
     n_slack = length(kkt.ind_ineq)
     kkt.A.V[end-n_slack+1:end] .= -1.0
     # Transfer to the matrix A stored in CSC format
@@ -173,11 +173,11 @@ end
 
 MadNLP.compress_hessian!(kkt::NormalKKTSystem) = nothing
 
-function MadNLP.jtprod!(y::AbstractVector, kkt::NormalKKTSystem, x::AbstractVector)
+NVTX.@annotate function MadNLP.jtprod!(y::AbstractVector, kkt::NormalKKTSystem, x::AbstractVector)
     return mul!(y, kkt.AT, x)
 end
 
-function MadNLP.build_kkt!(kkt::NormalKKTSystem)
+NVTX.@annotate function MadNLP.build_kkt!(kkt::NormalKKTSystem)
     m, n = kkt.m, kkt.n
     D = kkt.buffer_n
     Cp = _colptr(kkt.aug_com)
@@ -193,7 +193,7 @@ function MadNLP.build_kkt!(kkt::NormalKKTSystem)
     return
 end
 
-function MadNLP.solve!(kkt::NormalKKTSystem, w::MadNLP.AbstractKKTVector)
+NVTX.@annotate function MadNLP.solve!(kkt::NormalKKTSystem, w::MadNLP.AbstractKKTVector)
     MadNLP.reduce_rhs!(w.xp_lr, MadNLP.dual_lb(w), kkt.l_diag, w.xp_ur, MadNLP.dual_ub(w), kkt.u_diag)
     r1 = kkt.buffer_n
     r2 = kkt.buffer_m
@@ -218,7 +218,7 @@ function MadNLP.solve!(kkt::NormalKKTSystem, w::MadNLP.AbstractKKTVector)
     return w
 end
 
-function MadNLP.mul!(w::MadNLP.AbstractKKTVector{T}, kkt::NormalKKTSystem, v::MadNLP.AbstractKKTVector, alpha = one(T), beta = zero(T)) where {T}
+NVTX.@annotate function MadNLP.mul!(w::MadNLP.AbstractKKTVector{T}, kkt::NormalKKTSystem, v::MadNLP.AbstractKKTVector, alpha = one(T), beta = zero(T)) where {T}
     wx = MadNLP.primal(w)
     wy = MadNLP.dual(w)
 

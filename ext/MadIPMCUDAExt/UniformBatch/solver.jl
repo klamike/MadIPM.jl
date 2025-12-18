@@ -49,7 +49,9 @@ end
 
 @inline function for_active(batch_solver, funcs...)
     for func in funcs
-        batch_func(batch_solver, func)
+        NVTX.@range "$func" begin
+            batch_func(batch_solver, func)
+        end
     end
 end
 
@@ -57,34 +59,39 @@ function batch_initialize!(batch_solver::AbstractBatchSolver)
     for_active(batch_solver,
         MadIPM.pre_initialize!,
         MadIPM.init_starting_point_solve!,
-        MadIPM.post_initialize!
+        MadIPM.post_initialize!,
+        MadIPM.update_jacl!
     )
     return
 end
 function batch_mpc!(batch_solver::AbstractBatchSolver)
     while true
-        # Check termination criteria
-        for_active(batch_solver,
-            MadNLP.print_iter,
-            MadIPM.update_termination_criteria!,
-        )
-        update_batch!(batch_solver)
-        all_done(batch_solver) && return
+        NVTX.@range "Step" begin
+            # Check termination criteria
+            for_active(batch_solver,
+                MadNLP.print_iter,
+                MadIPM.update_termination_criteria!,
+            )
+            NVTX.@range "Update Pointers" begin
+                update_batch!(batch_solver)
+            end
+            all_done(batch_solver) && return
 
-        # Run MPC step
-        for_active(batch_solver,
-            MadIPM.update_regularization!,
-            MadIPM.factorize_regularized_system!,
-            MadIPM.set_predictive_rhs!,
-            MadIPM.solve_system!,
-            MadIPM.prediction_step_size!,
-            MadIPM.set_correction_rhs!,
-            MadIPM.solve_system!,
-            MadIPM.gondzio_correction_direction!,
-            MadIPM.update_step_size!,
-            MadIPM.apply_step!,
-            MadIPM.evaluate_model!
-        )
+            # Run MPC step
+            for_active(batch_solver,
+                MadIPM.update_regularization!,
+                MadIPM.factorize_regularized_system!,
+                MadIPM.set_predictive_rhs!,
+                MadIPM.solve_system!,
+                MadIPM.prediction_step_size!,
+                MadIPM.set_correction_rhs!,
+                MadIPM.solve_system!,
+                MadIPM.gondzio_correction_direction!,
+                MadIPM.update_step_size!,
+                MadIPM.apply_step!,
+                MadIPM.evaluate_model!
+            )
+        end
     end
 end
 
@@ -109,7 +116,11 @@ end
 
 
 function MadIPM.madipm(ms::AbstractVector{NLPModel}; kwargs...) where {NLPModel <: NLPModels.AbstractNLPModel}
-    solvers = MadIPM.MPCSolver.(ms; linear_solver = NoLinearSolver, kwargs...) # TODO: special constructor to share kkt/cb memory/set NoLinearSolver
-    batch_solver = UniformBatchSolver(solvers; linear_solver = MadNLPGPU.CUDSSSolver, kwargs...)
+    NVTX.@range "Allocating MPCSolvers" begin
+        solvers = MadIPM.MPCSolver.(ms; linear_solver = NoLinearSolver, kwargs...) # TODO: special constructor to share kkt/cb memory/set NoLinearSolver
+    end
+    NVTX.@range "Init UniformBatchSolver" begin
+        batch_solver = UniformBatchSolver(solvers; linear_solver = MadNLPGPU.CUDSSSolver, kwargs...)
+    end
     return MadIPM.solve!(batch_solver)
 end

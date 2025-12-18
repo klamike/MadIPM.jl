@@ -1,13 +1,14 @@
 name = "MadIPM"
 uuid = "4406d55e-1099-4ca6-ac6a-6cf051b10024"
-authors = ["François Pacaud <francoispacaud8@gmail.com>", "Alexis Montoison <amontoison@anl.gov>"]
 version = "0.1.2"
+authors = ["François Pacaud <francoispacaud8@gmail.com>", "Alexis Montoison <amontoison@anl.gov>"]
 
 [deps]
 LDLFactorizations = "40e66cde-538c-5869-a4ad-c39174c6795b"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MadNLP = "2621e9c9-9eb4-46b1-8089-e8c72242dfb6"
 NLPModels = "a4795742-8479-5a88-8948-cc11e1c8c1a6"
+NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 QuadraticModels = "f468eda6-eac5-11e8-05a5-ff9e497bcd19"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
@@ -19,7 +20,7 @@ MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
 MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 
 [extensions]
-MadIPMCUDAExt = ["CUDA", "KernelAbstractions", "MadNLPGPU"]
+MadIPMCUDAExt = ["CUDA", "KernelAbstractions", "MadNLPGPU", "NVTX"]
 MadIPMMathOptInterfaceExt = "MathOptInterface"
 
 [compat]
@@ -32,6 +33,7 @@ MadNLPGPU = "0.7"
 MadNLPTests = "0.5.3"
 MathOptInterface = "1.42"
 NLPModels = "0.21.5"
+NVTX = "1.0.1"
 Printf = "1.10"
 QuadraticModels = "0.9.14"
 SparseArrays = "1.10"

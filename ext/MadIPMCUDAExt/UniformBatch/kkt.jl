@@ -173,9 +173,15 @@ function batch_factorize!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTS
 end
 
 function batch_solve!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
-    copy_batch_rhs!(bkkt)
-    MadNLP.solve!(bkkt.linear_solver, bkkt.active_rhs[])
-    copy_batch_solution!(bkkt)
+    NVTX.@range "Copy RHS" begin
+        copy_batch_rhs!(bkkt)
+    end
+    NVTX.@range "Solve" begin
+        MadNLP.solve!(bkkt.linear_solver, bkkt.active_rhs[])
+    end
+    NVTX.@range "Copy Solution" begin
+        copy_batch_solution!(bkkt)
+    end
     return
 end
 

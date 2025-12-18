@@ -9,6 +9,11 @@ import NLPModels
 import QuadraticModels
 import QuadraticModels: SparseMatrixCOO
 
+
+using NVTX
+
+
+
 include("utils.jl")
 include("structure.jl")
 include("kernels.jl")
