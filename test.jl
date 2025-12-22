@@ -71,6 +71,12 @@ function run_loop(qps)
     return stats
 end
 
+function run_broadcast(qps)
+    solvers = MadIPM.MPCSolver.(qps; linear_solver=MadNLPGPU.CUDSSSolver, KWARGS...)
+    stats = MadIPM.solve!.(solvers)
+    return stats
+end
+
 function run_batch(qps)
     return MadIPM.madipm(qps; KWARGS...)
 end
@@ -79,19 +85,19 @@ function run_benchmark(case, batch_size; T=FLOAT_TYPE, warmup=false)
     NVTX.@range "Building" begin
         qps = build_qps(case, batch_size; T);
     end
-    
-    NVTX.@range "Loop" begin
-        t_loop = @elapsed stats = run_loop(qps)
-    end
-    for (i, stat) in enumerate(stats)
-        @assert stat.status == MadNLP.SOLVE_SUCCEEDED "Got $(stat.status) for sample $i"
-    end
 
     NVTX.@range "Batch" begin
         t_batch = @elapsed batch_stats = run_batch(qps)
     end
     for (i, stat) in enumerate(batch_stats)
         @assert stat.status == MadNLP.SOLVE_SUCCEEDED "Got $(stats[i].status) for sample $i in batch"
+    end
+
+    NVTX.@range "Broadcast" begin
+        t_loop = @elapsed stats = run_broadcast(qps)
+    end
+    for (i, stat) in enumerate(stats)
+        @assert stat.status == MadNLP.SOLVE_SUCCEEDED "Got $(stat.status) for sample $i"
         @assert stat.objective ≈ stats[i].objective atol=1e-3
     end
     
@@ -114,27 +120,27 @@ CASES = [
     # "14_ieee",
     # "30_ieee",
     # "57_ieee",
-    "89_pegase",
+    # "89_pegase",
     # "118_ieee",
     # "300_ieee",
     "1354_pegase",
     # "1888_rte",
-    "2869_pegase",
-    "6470_rte",
-    "9241_pegase",
+    # "2869_pegase",
+    # "6470_rte",
+    # "9241_pegase",
     # "13659_pegase",
 ]
 
 BATCH_SIZES = [
     # 1,
     # 2,
-    4,
+    # 4,
     # 8,
     16,
     # 24,
     # 32,
     # 48,
-    64,
+    # 64,
     # 96,
     # 128,
     # 160,
