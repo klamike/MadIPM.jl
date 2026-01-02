@@ -36,33 +36,27 @@ NVTX.@annotate function check_residual!(d::MadNLP.UnreducedKKTVector{T}, solver,
     w = solver._w1
     NVTX.@range "copyto" begin
         copyto!(MadNLP.full(w), MadNLP.full(p))
-        CUDA.synchronize()
     end
     NVTX.@range "mul" begin
         mul!(w, solver.kkt, d, -one(T), one(T))
-        CUDA.synchronize()
     end
     NVTX.@range "norms" begin
         norm_w = norm(MadNLP.full(w), Inf)
         norm_p = norm(MadNLP.full(p), Inf)
-        CUDA.synchronize()
     end
     NVTX.@range "ratio" begin
         residual_ratio = norm_w / max(one(T), norm_p)
-        CUDA.synchronize()
     end
     NVTX.@range "log" begin
         MadNLP.@debug(
             solver.logger,
             @sprintf("Residual after linear solve: %6.2e", residual_ratio),
             )
-        CUDA.synchronize()
     end
     NVTX.@range "check" begin
         if isnan(residual_ratio) || (opt.check_residual && (residual_ratio > opt.tol_linear_solve))
             throw(MadNLP.SolveException)
         end
-        CUDA.synchronize()
     end
     return d
 end

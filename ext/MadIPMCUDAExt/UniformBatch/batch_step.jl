@@ -317,7 +317,7 @@ NVTX.@annotate function batch_update_barrier!(batch_solver::UniformBatchSolver)
 end
 
 NVTX.@annotate function batch_prediction_step_size!(batch_solver::UniformBatchSolver)
-    pack_prediction_step_data!(batch_solver)
+    # pack_prediction_step_data!(batch_solver)
     batch_get_fraction_to_boundary_step!(batch_solver)
     batch_get_affine_complementarity_measure!(batch_solver)
     batch_get_correction!(batch_solver)
@@ -325,7 +325,7 @@ NVTX.@annotate function batch_prediction_step_size!(batch_solver::UniformBatchSo
     return
 end
 
-batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.prediction_step_size!)) =
+NVTX.@annotate batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.prediction_step_size!)) =
     batch_prediction_step_size!(batch_solver)
 
 NVTX.@annotate function pack_diag_data!(batch_solver::UniformBatchSolver)
