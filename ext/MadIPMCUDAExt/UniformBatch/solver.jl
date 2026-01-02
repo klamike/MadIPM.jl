@@ -1,30 +1,44 @@
-NVTX.@annotate function batch_func(batch_solver::AbstractBatchSolver, func)
+using Base.Threads
+using Polyester
+
+NVTX.@annotate function sync_active_streams!(batch_solver::UniformBatchSolver)
+    for i in 1:batch_solver.bkkt.active_batch_size[]
+        solver_idx = batch_solver.bkkt.batch_map_rev[i]
+        CUDA.synchronize(batch_solver.streams[solver_idx], blocking=true)
+    end
+end
+
+function batch_func(batch_solver::UniformBatchSolver, func)
     for i in 1:batch_solver.bkkt.active_batch_size[]
         solver_idx = batch_solver.bkkt.batch_map_rev[i]
         solver = batch_solver[solver_idx]
-        func(solver);
+        NVTX.@range "$i - $func" begin
+            stream!(batch_solver.streams[solver_idx]) do
+                func(solver);
+            end
+        end
     end
 end
 NVTX.@annotate function for_active(batch_solver, funcs...)
     for func in funcs
-        NVTX.@range "$func" begin
-            batch_func(batch_solver, func)
-        end
+        batch_func(batch_solver, func)
     end
 end
 
-NVTX.@annotate function batch_func_withindex(batch_solver::AbstractBatchSolver, func)
+function batch_func_withindex(batch_solver::AbstractBatchSolver, func)
     for i in 1:batch_solver.bkkt.active_batch_size[]
         solver_idx = batch_solver.bkkt.batch_map_rev[i]
         solver = batch_solver[solver_idx]
-        func(i, solver);
+        NVTX.@range "$i - $func" begin
+            stream!(batch_solver.streams[solver_idx]) do
+                func(i, solver);
+            end
+        end
     end
 end
 NVTX.@annotate function for_active_withindex(batch_solver, funcs...)
     for func in funcs
-        NVTX.@range "$func" begin
-            batch_func_withindex(batch_solver, func)
-        end
+        batch_func_withindex(batch_solver, func)
     end
 end
 
@@ -39,15 +53,13 @@ NVTX.@annotate function batch_initialize!(batch_solver::AbstractBatchSolver)
 end
 NVTX.@annotate function batch_mpc!(batch_solver::AbstractBatchSolver)
     while true
-        NVTX.@range "Step" begin
+        NVTX.@range "Step $(batch_solver[batch_solver.bkkt.batch_map_rev[1]].cnt.k+1) ($(n_active(batch_solver))/$(length(batch_solver)))" begin
             # Check termination criteria
             for_active(batch_solver,
                 MadNLP.print_iter,
                 MadIPM.update_termination_criteria!,
             )
-            NVTX.@range "Update Pointers" begin
-                update_batch!(batch_solver)
-            end
+            update_batch!(batch_solver)
             all_done(batch_solver) && return
 
             # Run MPC step
@@ -89,11 +101,11 @@ end
 
 
 NVTX.@annotate function MadIPM.madipm(ms::AbstractVector{NLPModel}; kwargs...) where {NLPModel <: NLPModels.AbstractNLPModel}
-    NVTX.@range "Allocating MPCSolvers" begin
-        solvers = MadIPM.MPCSolver.(ms; linear_solver = NoLinearSolver, kwargs...) # TODO: special constructor to share kkt/cb memory/set NoLinearSolver
-    end
+    # NVTX.@range "Allocating MPCSolvers" begin
+    #     solvers = MadIPM.MPCSolver.(ms; linear_solver = NoLinearSolver, kwargs...) # TODO: special constructor to share kkt/cb memory/set NoLinearSolver
+    # end
     NVTX.@range "Init UniformBatchSolver" begin
-        batch_solver = UniformBatchSolver(solvers; linear_solver = MadNLPGPU.CUDSSSolver, kwargs...)
+        batch_solver = UniformBatchSolver(ms; linear_solver = MadNLPGPU.CUDSSSolver, kwargs...)
     end
     return MadIPM.solve!(batch_solver)
 end
