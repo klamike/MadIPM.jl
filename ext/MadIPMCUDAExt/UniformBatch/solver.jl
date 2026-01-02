@@ -1,53 +1,11 @@
-batch_init_starting_point_solve!(batch_solver::UniformBatchSolver) = begin
-    for_active(batch_solver,
-        MadIPM.set_initial_regularization!,
-        MadNLP.build_kkt!
-    )
-    batch_factorize!(batch_solver.bkkt)
-
-    for_active(batch_solver,
-        MadIPM.set_initial_primal_rhs!
-    )
-    batch_solve_system!(batch_solver)
-    for_active(batch_solver,
-        MadIPM.update_primal_start!,
-        MadIPM.set_initial_dual_rhs!
-    )
-    batch_solve_system!(batch_solver)
-    return
-end
-batch_factorize_regularized_system!(batch_solver::UniformBatchSolver) = begin
-    for_active(batch_solver,
-        MadIPM.set_aug_diagonal_reg!,
-        MadNLP.build_kkt!
-    )
-    batch_factorize!(batch_solver.bkkt)
-    return
-end
-batch_solve_system!(batch_solver::UniformBatchSolver) = begin
-    for_active(batch_solver,
-        pre_solve!
-    )
-    batch_solve!(batch_solver.bkkt)
-    for_active(batch_solver,
-        post_solve!
-    )
-    return
-end
-
-batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.factorize_regularized_system!)) = batch_factorize_regularized_system!(batch_solver)
-batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.solve_system!)) = batch_solve_system!(batch_solver)
-batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.init_starting_point_solve!)) = batch_init_starting_point_solve!(batch_solver)
-
-@inline function batch_func(batch_solver::AbstractBatchSolver, func)
+NVTX.@annotate function batch_func(batch_solver::AbstractBatchSolver, func)
     for i in 1:batch_solver.bkkt.active_batch_size[]
         solver_idx = batch_solver.bkkt.batch_map_rev[i]
         solver = batch_solver[solver_idx]
         func(solver);
     end
 end
-
-@inline function for_active(batch_solver, funcs...)
+NVTX.@annotate function for_active(batch_solver, funcs...)
     for func in funcs
         NVTX.@range "$func" begin
             batch_func(batch_solver, func)
@@ -55,7 +13,22 @@ end
     end
 end
 
-function batch_initialize!(batch_solver::AbstractBatchSolver)
+NVTX.@annotate function batch_func_withindex(batch_solver::AbstractBatchSolver, func)
+    for i in 1:batch_solver.bkkt.active_batch_size[]
+        solver_idx = batch_solver.bkkt.batch_map_rev[i]
+        solver = batch_solver[solver_idx]
+        func(i, solver);
+    end
+end
+NVTX.@annotate function for_active_withindex(batch_solver, funcs...)
+    for func in funcs
+        NVTX.@range "$func" begin
+            batch_func_withindex(batch_solver, func)
+        end
+    end
+end
+
+NVTX.@annotate function batch_initialize!(batch_solver::AbstractBatchSolver)
     for_active(batch_solver,
         MadIPM.pre_initialize!,
         MadIPM.init_starting_point_solve!,
@@ -64,7 +37,7 @@ function batch_initialize!(batch_solver::AbstractBatchSolver)
     )
     return
 end
-function batch_mpc!(batch_solver::AbstractBatchSolver)
+NVTX.@annotate function batch_mpc!(batch_solver::AbstractBatchSolver)
     while true
         NVTX.@range "Step" begin
             # Check termination criteria
@@ -96,7 +69,7 @@ function batch_mpc!(batch_solver::AbstractBatchSolver)
 end
 
 
-function MadIPM.solve!(batch_solver::AbstractBatchSolver)
+NVTX.@annotate function MadIPM.solve!(batch_solver::AbstractBatchSolver)
     batch_stats = [MadNLP.MadNLPExecutionStats(solver) for solver in batch_solver]  # TODO: BatchExecutionStats?
 
     try
@@ -115,7 +88,7 @@ function MadIPM.solve!(batch_solver::AbstractBatchSolver)
 end
 
 
-function MadIPM.madipm(ms::AbstractVector{NLPModel}; kwargs...) where {NLPModel <: NLPModels.AbstractNLPModel}
+NVTX.@annotate function MadIPM.madipm(ms::AbstractVector{NLPModel}; kwargs...) where {NLPModel <: NLPModels.AbstractNLPModel}
     NVTX.@range "Allocating MPCSolvers" begin
         solvers = MadIPM.MPCSolver.(ms; linear_solver = NoLinearSolver, kwargs...) # TODO: special constructor to share kkt/cb memory/set NoLinearSolver
     end

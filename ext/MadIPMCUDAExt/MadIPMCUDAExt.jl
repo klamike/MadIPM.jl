@@ -25,7 +25,7 @@ include("cuda_wrapper.jl")
     end
 end
 
-function fill_structure!(A::CUSPARSE.CuSparseMatrixCSR, rows, cols)
+NVTX.@annotate function fill_structure!(A::CUSPARSE.CuSparseMatrixCSR, rows, cols)
     @assert length(cols) == length(rows)
     if length(cols) > 0
         backend = CUDABackend()
@@ -36,20 +36,20 @@ function fill_structure!(A::CUSPARSE.CuSparseMatrixCSR, rows, cols)
     end
 end
 
-function NLPModels.obj(qp::QuadraticModel{T, S, M1}, x::AbstractVector) where {T, S, M1 <: MadIPMOperator}
+NVTX.@annotate function NLPModels.obj(qp::QuadraticModel{T, S, M1}, x::AbstractVector) where {T, S, M1 <: MadIPMOperator}
   NLPModels.increment!(qp, :neval_obj)
   mul!(qp.data.v, qp.data.H, x)
   return qp.data.c0 + dot(qp.data.c, x) + dot(qp.data.v, x) / 2
 end
 
-function NLPModels.grad!(qp::QuadraticModel{T, S, M1}, x::AbstractVector, g::AbstractVector) where {T, S, M1 <: MadIPMOperator}
+NVTX.@annotate function NLPModels.grad!(qp::QuadraticModel{T, S, M1}, x::AbstractVector, g::AbstractVector) where {T, S, M1 <: MadIPMOperator}
   NLPModels.increment!(qp, :neval_grad)
   mul!(g, qp.data.H, x)
   g .+= qp.data.c
   return g
 end
 
-function NLPModels.hess_structure!(
+NVTX.@annotate function NLPModels.hess_structure!(
     qp::QuadraticModel{T, S, M1},
     rows::AbstractVector{<:Integer},
     cols::AbstractVector{<:Integer},
@@ -58,7 +58,7 @@ function NLPModels.hess_structure!(
     return rows, cols
 end
 
-function NLPModels.hess_coord!(
+NVTX.@annotate function NLPModels.hess_coord!(
     qp::QuadraticModel{T, S, M1},
     x::AbstractVector{T},
     vals::AbstractVector{T};
@@ -69,7 +69,7 @@ function NLPModels.hess_coord!(
     return vals
 end
 
-function NLPModels.jac_lin_coord!(
+NVTX.@annotate function NLPModels.jac_lin_coord!(
     qp::QuadraticModel{T, S, M1, M2},
     x::AbstractVector,
     vals::AbstractVector,
@@ -81,7 +81,7 @@ function NLPModels.jac_lin_coord!(
     return vals
 end
 
-function NLPModels.jac_lin_structure!(
+NVTX.@annotate function NLPModels.jac_lin_structure!(
     qp::QuadraticModel{T, S, M1, M2},
     rows::AbstractVector{<:Integer},
     cols::AbstractVector{<:Integer},
@@ -95,7 +95,7 @@ end
     CuSparseMatrixCOO
 =#
 
-function CUSPARSE.CuSparseMatrixCOO(A::SparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
+NVTX.@annotate function CUSPARSE.CuSparseMatrixCOO(A::SparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
     return CUSPARSE.CuSparseMatrixCOO{Tv, Ti}(
         CuVector(A.rows),
         CuVector(A.cols),
@@ -109,7 +109,7 @@ end
     CuSparseMatrixCSR
 =#
 
-function CUSPARSE.CuSparseMatrixCSR(A::SparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
+NVTX.@annotate function CUSPARSE.CuSparseMatrixCSR(A::SparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
     m, n = size(A)
     Ap, Ai, Ax = MadIPM.coo_to_csr(m, n, A.rows, A.cols, A.vals)
     return CUSPARSE.CuSparseMatrixCSR{Tv, Ti}(
@@ -124,7 +124,7 @@ end
     Pass QuadraticModel to the GPU
 =#
 
-function Base.convert(::Type{QuadraticModel{T, S}}, qp::QuadraticModel{T}) where {T, S<:CuArray}
+NVTX.@annotate function Base.convert(::Type{QuadraticModel{T, S}}, qp::QuadraticModel{T}) where {T, S<:CuArray}
     H = MadIPMOperator(CuSparseMatrixCSR(qp.data.H), symmetric=true)
     A = MadIPMOperator(CuSparseMatrixCSR(qp.data.A), symmetric=false)
 

@@ -1,10 +1,11 @@
 abstract type AbstractBatchSolver end
 
-struct UniformBatchSolver{VS} <: AbstractBatchSolver
+struct UniformBatchSolver{VS,BK,SD} <: AbstractBatchSolver
     solvers::VS
-    bkkt::UniformBatchKKTSystem
+    bkkt::BK
+    step::SD
 
-    function UniformBatchSolver(solvers::Vector{Solver}; linear_solver::Type, kwargs...) where {Solver<:MadIPM.MPCSolver}
+    NVTX.@annotate function UniformBatchSolver(solvers::Vector{Solver}; linear_solver::Type, kwargs...) where {Solver<:MadIPM.MPCSolver}
         batch_size = length(solvers)
         solver1 = first(solvers)
         nlp1 = solver1.nlp
@@ -21,7 +22,8 @@ struct UniformBatchSolver{VS} <: AbstractBatchSolver
 
         options = MadIPM.load_options(nlp1; linear_solver=linear_solver, kwargs...)
         bkkt = UniformBatchKKTSystem(kkts, vecs, linear_solver, opt_linear_solver=options.linear_solver)
-        return new{Vector{Solver}}(solvers, bkkt)
+        step = BatchStepData(solver1, batch_size)
+        return new{Vector{Solver},typeof(bkkt),typeof(step)}(solvers, bkkt, step)
     end
 end
 

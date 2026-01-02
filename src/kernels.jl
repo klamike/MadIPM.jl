@@ -18,7 +18,7 @@ NVTX.@annotate function set_initial_dual_rhs!(solver::MadNLP.AbstractMadNLPSolve
     return
 end
 
-NVTX.@annotate function set_predictive_rhs!(solver::MadNLP.AbstractMadNLPSolver, kkt::MadNLP.AbstractKKTSystem)
+NVTX.@annotate function set_predictive_rhs!(solver::MadNLP.AbstractMadNLPSolver)
     # RHS
     px = MadNLP.primal(solver.p)
     py = MadNLP.dual(solver.p)
@@ -135,7 +135,7 @@ NVTX.@annotate function set_aug_diagonal_reg!(kkt::MadNLP.AbstractKKTSystem{T}, 
     return
 end
 
-# Special function for ScaledSparseKKTSystem to ensure coefficients are positive
+# Special NVTX.@annotate function for ScaledSparseKKTSystem to ensure coefficients are positive
 NVTX.@annotate function set_aug_diagonal_reg!(kkt::MadNLP.ScaledSparseKKTSystem{T}, solver::MadNLP.AbstractMadNLPSolver{T}) where T
     fill!(kkt.reg, solver.del_w)
     fill!(kkt.du_diag, solver.del_c)

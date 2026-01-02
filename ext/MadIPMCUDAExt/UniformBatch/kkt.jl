@@ -84,7 +84,7 @@ end
 all_done(bkkt::UniformBatchKKTSystem) = (bkkt.active_batch_size[] == 0)
 is_active(bkkt::UniformBatchKKTSystem, i) = bkkt.is_active[i]
 
-function UniformBatchKKTSystem(  # NOTE: move to MadNLPGPU
+NVTX.@annotate function UniformBatchKKTSystem(  # NOTE: move to MadNLPGPU
     kkts::Vector{KKTSystem},
     vecs::Vector{KKTVector},
     linear_solver::Type{MadNLPGPU.CUDSSSolver};
@@ -130,7 +130,7 @@ function UniformBatchKKTSystem(  # NOTE: move to MadNLPGPU
     return bkkt
 end
 
-function update_batch!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
+NVTX.@annotate function update_batch!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
     # NOTE: only called if an update is needed
     active_pos = 0
     for i in 1:bkkt.batch_size
@@ -157,7 +157,7 @@ function update_batch!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSyst
     return
 end
 
-function update_pointers!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
+NVTX.@annotate function update_pointers!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
     for (i, kkt_i) in enumerate(bkkt.kkts)
         batch_pos = bkkt.batch_map[i]
         if batch_pos > 0
@@ -167,26 +167,20 @@ function update_pointers!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTS
     return
 end
 
-function batch_factorize!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
+NVTX.@annotate function batch_factorize!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
     MadNLP.factorize!(bkkt.linear_solver)
     return
 end
 
-function batch_solve!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
-    NVTX.@range "Copy RHS" begin
-        copy_batch_rhs!(bkkt)
-    end
-    NVTX.@range "Solve" begin
-        MadNLP.solve!(bkkt.linear_solver, bkkt.active_rhs[])
-    end
-    NVTX.@range "Copy Solution" begin
-        copy_batch_solution!(bkkt)
-    end
+NVTX.@annotate function batch_solve!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
+    copy_batch_rhs!(bkkt)
+    MadNLP.solve!(bkkt.linear_solver, bkkt.active_rhs[])
+    copy_batch_solution!(bkkt)
     return
 end
 
 # TODO: can be better (each copyto syncs)
-function copy_batch_rhs!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
+NVTX.@annotate function copy_batch_rhs!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
     for active_i in 1:bkkt.active_batch_size[]
         dest = bkkt.rhs_slices[active_i]
         vec = get_active_vec(bkkt, active_i)
@@ -196,7 +190,7 @@ function copy_batch_rhs!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSy
     return
 end
 
-function copy_batch_solution!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
+NVTX.@annotate function copy_batch_solution!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
     for active_i in 1:bkkt.active_batch_size[]
         vec = get_active_vec(bkkt, active_i)
         dest = get_rhs(KKTSystem, vec)
@@ -206,6 +200,50 @@ function copy_batch_solution!(bkkt::UniformBatchKKTSystem{KKTSystem,LS}) where {
     return
 end
 
-function get_active_vec(bkkt::UniformBatchKKTSystem{KKTSystem,LS}, active_i) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
+NVTX.@annotate function get_active_vec(bkkt::UniformBatchKKTSystem{KKTSystem,LS}, active_i) where {KKTSystem,LS<:MadNLPGPU.CUDSSSolver}
     return bkkt.vecs[bkkt.batch_map_rev[active_i]]
 end
+
+NVTX.@annotate function batch_init_starting_point_solve!(batch_solver::UniformBatchSolver)
+    for_active(batch_solver,
+        MadIPM.set_initial_regularization!,
+        MadNLP.build_kkt!
+    )
+    batch_factorize!(batch_solver.bkkt)
+
+    for_active(batch_solver,
+        MadIPM.set_initial_primal_rhs!
+    )
+    batch_solve_system!(batch_solver)
+    for_active(batch_solver,
+        MadIPM.update_primal_start!,
+        MadIPM.set_initial_dual_rhs!
+    )
+    batch_solve_system!(batch_solver)
+    return
+end
+NVTX.@annotate function batch_factorize_regularized_system!(batch_solver::UniformBatchSolver)
+    batch_set_aug_diagonal_reg!(batch_solver)
+    for_active(batch_solver,
+        MadNLP.build_kkt!
+    )
+    batch_factorize!(batch_solver.bkkt)
+    return
+end
+NVTX.@annotate function batch_solve_system!(batch_solver::UniformBatchSolver)
+    for_active(batch_solver,
+        pre_solve!
+    )
+    batch_solve!(batch_solver.bkkt)
+    for_active(batch_solver,
+        post_solve!
+    )
+    return
+end
+
+batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.factorize_regularized_system!)) =
+    batch_factorize_regularized_system!(batch_solver)
+batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.solve_system!)) =
+    batch_solve_system!(batch_solver)
+batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.init_starting_point_solve!)) =
+    batch_init_starting_point_solve!(batch_solver)
