@@ -9,7 +9,7 @@ import NLPModels
 import QuadraticModels
 import QuadraticModels: SparseMatrixCOO
 
-
+using CUDA
 using NVTX
 
 

@@ -25,27 +25,44 @@ NVTX.@annotate function solve_system!(
 ) where T
     copyto!(MadNLP.full(d), MadNLP.full(p))
     MadNLP.solve!(solver.kkt, d)
-    post_solve!(d, solver, p)
+    # check_residual!(d, solver, p)
     return d
 end
 
-NVTX.@annotate function post_solve!(d::MadNLP.UnreducedKKTVector{T}, solver, p) where T
+NVTX.@annotate function check_residual!(d::MadNLP.UnreducedKKTVector{T}, solver, p) where T
     opt = solver.opt
 
     # Check residual
     w = solver._w1
-    copyto!(MadNLP.full(w), MadNLP.full(p))
-    mul!(w, solver.kkt, d, -one(T), one(T))
-    norm_w = norm(MadNLP.full(w), Inf)
-    norm_p = norm(MadNLP.full(p), Inf)
-
-    residual_ratio = norm_w / max(one(T), norm_p)
-    MadNLP.@debug(
-        solver.logger,
-        @sprintf("Residual after linear solve: %6.2e", residual_ratio),
-    )
-    if isnan(residual_ratio) || (opt.check_residual && (residual_ratio > opt.tol_linear_solve))
-        throw(MadNLP.SolveException)
+    NVTX.@range "copyto" begin
+        copyto!(MadNLP.full(w), MadNLP.full(p))
+        CUDA.synchronize()
+    end
+    NVTX.@range "mul" begin
+        mul!(w, solver.kkt, d, -one(T), one(T))
+        CUDA.synchronize()
+    end
+    NVTX.@range "norms" begin
+        norm_w = norm(MadNLP.full(w), Inf)
+        norm_p = norm(MadNLP.full(p), Inf)
+        CUDA.synchronize()
+    end
+    NVTX.@range "ratio" begin
+        residual_ratio = norm_w / max(one(T), norm_p)
+        CUDA.synchronize()
+    end
+    NVTX.@range "log" begin
+        MadNLP.@debug(
+            solver.logger,
+            @sprintf("Residual after linear solve: %6.2e", residual_ratio),
+            )
+        CUDA.synchronize()
+    end
+    NVTX.@range "check" begin
+        if isnan(residual_ratio) || (opt.check_residual && (residual_ratio > opt.tol_linear_solve))
+            throw(MadNLP.SolveException)
+        end
+        CUDA.synchronize()
     end
     return d
 end

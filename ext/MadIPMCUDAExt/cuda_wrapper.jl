@@ -9,7 +9,7 @@ import LinearAlgebra: BlasFloat
     end
 end
 
-function MadNLP.transfer!(
+NVTX.@annotate function MadNLP.transfer!(
     dest::CUSPARSE.CuSparseMatrixCSC{Tv},
     src::MadNLP.SparseMatrixCOO{Tv},
     map::CuVector{Int},
@@ -23,13 +23,13 @@ function MadNLP.transfer!(
     return
 end
 
-function MadNLP.compress_hessian!(
+NVTX.@annotate function MadNLP.compress_hessian!(
     kkt::MadNLP.SparseKKTSystem{T,VT,MT},
 ) where {T,VT,MT<:CUSPARSE.CuSparseMatrixCSC{T,Int32}}
     MadNLP.transfer!(kkt.hess_com, kkt.hess_raw, kkt.hess_csc_map)
 end
 
-function MadNLP.compress_jacobian!(
+NVTX.@annotate function MadNLP.compress_jacobian!(
     kkt::MadIPM.NormalKKTSystem{T,VT,MT},
 ) where {T,VT,MT<:CUSPARSE.CuSparseMatrixCSC{T,Int32}}
     n_slack = length(kkt.ind_ineq)
@@ -85,7 +85,7 @@ end
     nothing
 end
 
-function MadIPM.assemble_normal_system!(
+NVTX.@annotate function MadIPM.assemble_normal_system!(
     n_rows,
     n_cols,
     Jtp::CuArray{Ti},
@@ -158,7 +158,7 @@ end
     nothing
 end
 
-function MadIPM.build_normal_system(
+NVTX.@annotate function MadIPM.build_normal_system(
     n_rows,
     n_cols,
     Jtp::CuVector{Ti},

@@ -21,7 +21,7 @@ const KWARGS = (
 
 @memoize parse_data(case) = ExaModelsPower.parse_ac_power_data("pglib_opf_case$case.m")
 
-function build_qps(case, batch_size; T=FLOAT_TYPE)
+NVTX.@annotate function build_qps(case, batch_size; T=FLOAT_TYPE)
     data = parse_data(case);
     core = ExaCore(T);  # formulate on CPU
     dcopf, ~, ~, (pd, bs) = ExaModelsPower.build_dcopf(data; core);
@@ -62,7 +62,7 @@ function build_qps(case, batch_size; T=FLOAT_TYPE)
             end for i in 1:batch_size]
 end
 
-function run_loop(qps)
+NVTX.@annotate function run_loop(qps)
     t = typeof(first(qps)).parameters
     stats = Vector{MadNLP.MadNLPExecutionStats{t[1],t[2]}}(undef, length(qps))
     for (i, qp) in enumerate(qps)
@@ -71,26 +71,33 @@ function run_loop(qps)
     return stats
 end
 
-function run_broadcast(qps)
+NVTX.@annotate function run_broadcast(qps)
     solvers = MadIPM.MPCSolver.(qps; linear_solver=MadNLPGPU.CUDSSSolver, KWARGS...)
     stats = MadIPM.solve!.(solvers)
     return stats
 end
 
-function run_batch(qps)
+NVTX.@annotate function run_batch(qps)
     return MadIPM.madipm(qps; KWARGS...)
 end
 
-function run_benchmark(case, batch_size; T=FLOAT_TYPE, warmup=false)
+NVTX.@annotate function run_benchmark(case, batch_size; T=FLOAT_TYPE, warmup=false)
     NVTX.@range "Building" begin
         qps = build_qps(case, batch_size; T);
     end
-
-    NVTX.@range "Batch" begin
-        t_batch = @elapsed batch_stats = run_batch(qps)
+    if warmup
+        NVTX.@range "Batch" begin
+            t_batch = @elapsed batch_stats = run_batch(qps)
+        end
+    else
+        CUDA.@profile begin
+            NVTX.@range "Batch" begin
+                t_batch = @elapsed batch_stats = run_batch(qps)
+            end
+        end
     end
     for (i, stat) in enumerate(batch_stats)
-        @assert stat.status == MadNLP.SOLVE_SUCCEEDED "Got $(stats[i].status) for sample $i in batch"
+        @assert stat.status == MadNLP.SOLVE_SUCCEEDED "Got $(stat.status) for sample $i in batch"
     end
 
     NVTX.@range "Broadcast" begin
@@ -163,11 +170,11 @@ for case in CASES
             NVTX.@range "Warmup" begin
                 run_benchmark(case, batch_size, warmup=true)
             end
-            CUDA.@profile begin
-                NVTX.@range "Benchmark" begin
-                    run_benchmark(case, batch_size)
-                end
+            # CUDA.@profile begin
+            NVTX.@range "Benchmark" begin
+                run_benchmark(case, batch_size)
             end
+            # end
         catch e
             @error "Error for $case x $batch_size: $e"
             break

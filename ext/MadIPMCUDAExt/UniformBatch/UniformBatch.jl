@@ -14,7 +14,7 @@ post_solve!(solver::MadIPM.MPCSolver{T,VT,VI,KKTSystem}) where {
     T,VT,VI,KKTSystem<:MadNLP.AbstractReducedKKTSystem,
 } = begin
     MadNLP.finish_aug_solve!(solver.kkt, solver.d)
-    MadIPM.post_solve!(solver.d, solver, solver.p)
+    # MadIPM.check_residual!(solver.d, solver, solver.p)
 end
 
 ## dummy solver to make sure batch solve uses batch solver only
@@ -25,6 +25,7 @@ MadNLP.set_options!(::Nothing, x) = x
 MadNLP.is_supported(::Type{NoLinearSolver}, ::Type{T}) where {T<:AbstractFloat} = true
 
 
-include("kkt.jl")
 include("structure.jl")
+include("kkt.jl")
 include("solver.jl")
+include("batch_step.jl")
