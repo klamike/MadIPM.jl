@@ -1,10 +1,11 @@
-using Pkg; Pkg.instantiate()
+using Pkg; Pkg.instantiate(); ENV["JULIA_NVTX_CALLBACKS"]="gc,alloc,free"
 
 using MadIPM, MadNLP
 using QuadraticModels, NLPModels, ExaModels, ExaModelsPower
 using MadNLPGPU, CUDA, CUDSS, KernelAbstractions
 using PProf, NVTX
 using Random, Distributions, SparseArrays, Memoize
+using Base.Threads, Polyester
 
 const MODE = :profile;
 
@@ -65,7 +66,8 @@ end
 NVTX.@annotate function run_loop(qps)
     t = typeof(first(qps)).parameters
     stats = Vector{MadNLP.MadNLPExecutionStats{t[1],t[2]}}(undef, length(qps))
-    for (i, qp) in enumerate(qps)
+    @batch for i in 1:length(qps)
+        qp = qps[i]
         stats[i] = MadIPM.madipm(qp; linear_solver=MadNLPGPU.CUDSSSolver, KWARGS...)
     end
     return stats
@@ -81,31 +83,35 @@ NVTX.@annotate function run_batch(qps)
     return MadIPM.madipm(qps; KWARGS...)
 end
 
-NVTX.@annotate function run_benchmark(case, batch_size; T=FLOAT_TYPE, warmup=false)
-    NVTX.@range "Building" begin
-        qps = build_qps(case, batch_size; T);
-    end
-    if warmup
-        NVTX.@range "Batch" begin
-            t_batch = @elapsed batch_stats = run_batch(qps)
-        end
-    else
-        CUDA.@profile begin
-            NVTX.@range "Batch" begin
-                t_batch = @elapsed batch_stats = run_batch(qps)
-            end
-        end
+
+function _run_benchmark(qps)
+    NVTX.@range "Batch" begin
+        t_batch = @elapsed batch_stats = run_batch(qps)
     end
     for (i, stat) in enumerate(batch_stats)
         @assert stat.status == MadNLP.SOLVE_SUCCEEDED "Got $(stat.status) for sample $i in batch"
     end
-
-    NVTX.@range "Broadcast" begin
-        t_loop = @elapsed stats = run_broadcast(qps)
+    
+    NVTX.@range "Loop" begin
+        t_loop = @elapsed stats = run_loop(qps)
     end
     for (i, stat) in enumerate(stats)
         @assert stat.status == MadNLP.SOLVE_SUCCEEDED "Got $(stat.status) for sample $i"
         @assert stat.objective ≈ stats[i].objective atol=1e-3
+    end
+
+    return t_loop, t_batch
+end
+NVTX.@annotate function run_benchmark(case, batch_size; T=FLOAT_TYPE, warmup=false)
+    NVTX.@range "Building" begin
+        qps = build_qps(case, batch_size; T);
+    end
+    t_loop, t_batch = if warmup
+        _run_benchmark(qps)
+    else
+        CUDA.@profile begin
+            _run_benchmark(qps)
+        end
     end
     
     if !warmup
@@ -130,11 +136,11 @@ CASES = [
     # "89_pegase",
     # "118_ieee",
     # "300_ieee",
-    "1354_pegase",
+    # "1354_pegase",
     # "1888_rte",
     # "2869_pegase",
     # "6470_rte",
-    # "9241_pegase",
+    "9241_pegase",
     # "13659_pegase",
 ]
 

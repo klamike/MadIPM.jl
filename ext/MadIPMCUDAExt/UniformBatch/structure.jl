@@ -4,21 +4,13 @@ struct UniformBatchSolver{VS,BK,SD} <: AbstractBatchSolver
     solvers::VS
     bkkt::BK
     step::SD
-    streams::Vector{CuStream}
 
     function UniformBatchSolver(models::Vector{Model}; linear_solver::Type, kwargs...) where {Model<:NLPModels.AbstractNLPModel}
         batch_size = length(models)
-        streams = [CuStream() for _ in 1:batch_size]
 
         solvers = Vector{MadIPM.MPCSolver}(undef, batch_size)
         for i in 1:batch_size
-            stream!(streams[i]) do
-                solvers[i] = MadIPM.MPCSolver(models[i]; linear_solver=NoLinearSolver, kwargs...)
-            end
-        end
-
-        for s in streams
-            CUDA.synchronize(s)
+            solvers[i] = MadIPM.MPCSolver(models[i]; linear_solver=NoLinearSolver, kwargs...)
         end
 
         solver1 = first(solvers)
@@ -41,7 +33,7 @@ struct UniformBatchSolver{VS,BK,SD} <: AbstractBatchSolver
         CUDA.enable_synchronization!(bkkt.batch_nzVal, false)
         CUDA.enable_synchronization!(bkkt.batch_rhs, false)
         step = BatchStepData(solver1, batch_size)
-        return new{typeof(solvers),typeof(bkkt),typeof(step)}(solvers, bkkt, step, streams)
+        return new{typeof(solvers),typeof(bkkt),typeof(step)}(solvers, bkkt, step)
     end
 end
 

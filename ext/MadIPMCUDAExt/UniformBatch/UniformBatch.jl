@@ -1,3 +1,5 @@
+using Polyester
+
 ## for each KKT system:
 get_rhs_size(kkt::MadNLP.AbstractReducedKKTSystem, vec::MadNLP.UnreducedKKTVector) = length(get_rhs(typeof(kkt), vec))
 get_rhs(::Type{<:MadNLP.AbstractReducedKKTSystem}, vec::MadNLP.UnreducedKKTVector) = MadNLP.primal_dual(vec)

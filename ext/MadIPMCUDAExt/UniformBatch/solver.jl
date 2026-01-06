@@ -1,19 +1,12 @@
 using Base.Threads
 using Polyester
 
-NVTX.@annotate function sync_active_streams!(batch_solver::UniformBatchSolver)
-    for i in 1:batch_solver.bkkt.active_batch_size[]
-        solver_idx = batch_solver.bkkt.batch_map_rev[i]
-        CUDA.synchronize(batch_solver.streams[solver_idx], blocking=true)
-    end
-end
-
 function batch_func(batch_solver::UniformBatchSolver, func)
-    for i in 1:batch_solver.bkkt.active_batch_size[]
-        solver_idx = batch_solver.bkkt.batch_map_rev[i]
-        solver = batch_solver[solver_idx]
-        NVTX.@range "$i - $func" begin
-            stream!(batch_solver.streams[solver_idx]) do
+    NVTX.@range "$func" begin
+        @batch for i in 1:batch_solver.bkkt.active_batch_size[]
+            solver_idx = batch_solver.bkkt.batch_map_rev[i]
+            solver = batch_solver[solver_idx]
+            NVTX.@range "$i - $func" begin
                 func(solver);
             end
         end
@@ -26,11 +19,11 @@ NVTX.@annotate function for_active(batch_solver, funcs...)
 end
 
 function batch_func_withindex(batch_solver::AbstractBatchSolver, func)
-    for i in 1:batch_solver.bkkt.active_batch_size[]
-        solver_idx = batch_solver.bkkt.batch_map_rev[i]
-        solver = batch_solver[solver_idx]
-        NVTX.@range "$i - $func" begin
-            stream!(batch_solver.streams[solver_idx]) do
+    NVTX.@range "$func" begin
+        @batch for i in 1:batch_solver.bkkt.active_batch_size[]
+            solver_idx = batch_solver.bkkt.batch_map_rev[i]
+            solver = batch_solver[solver_idx]
+            NVTX.@range "$i - $func" begin
                 func(i, solver);
             end
         end
@@ -91,7 +84,9 @@ NVTX.@annotate function MadIPM.solve!(batch_solver::AbstractBatchSolver)
     catch e
         rethrow(e)  # FIXME
     finally
-        for (stats, solver) in zip(batch_stats, batch_solver)
+        for i in 1:length(batch_solver)
+            stats = batch_stats[i]
+            solver = batch_solver[i]
             MadIPM.finalize!(stats, solver)
         end
     end

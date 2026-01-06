@@ -110,9 +110,11 @@ NVTX.@annotate function UniformBatchKKTSystem(  # NOTE: move to MadNLPGPU
 
     batch_aug_com = similar(kkt1.aug_com)
     batch_aug_com.nzVal = batch_nzVal
-    _linear_solver = linear_solver(
-        batch_aug_com; opt = opt_linear_solver
-    )
+    NVTX.@range "CUDSS Init" begin
+        _linear_solver = linear_solver(
+            batch_aug_com; opt = opt_linear_solver
+        )
+    end
 
     bkkt = UniformBatchKKTSystem(
         kkts, vecs, _linear_solver,
