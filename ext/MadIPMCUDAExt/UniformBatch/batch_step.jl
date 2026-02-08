@@ -115,6 +115,7 @@ NVTX.@annotate function BatchStepData(solvers::Vector{<:MadIPM.MPCSolver{T,VT}})
         fill!(VTC(undef, batch_size), zero(T)),
         fill!(VTC(undef, batch_size), zero(T)),
 
+        fill!(VT(undef, batch_size), zero(T)),
         fill!(VT(undef, n_tot * batch_size), zero(T)),
         fill!(VT(undef, n_tot * batch_size), zero(T)),
         fill!(VT(undef, n_tot * batch_size), zero(T)),
