@@ -650,3 +650,50 @@ end
 batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.update_regularization!)) =
     batch_update_regularization!(batch_solver)
 
+
+function batch_update_termination_criteria!(batch_solver::UniformBatchSolver)
+    bkkt = batch_solver.bkkt
+    active_size = bkkt.active_batch_size[]
+    step = batch_solver.step
+
+    batch_dual_objective!(batch_solver)
+    batch_get_inf_pr!(batch_solver)
+    batch_get_inf_du!(batch_solver)
+    batch_get_inf_compl!(batch_solver)
+
+    NVTX.@range "dtoh" begin
+    dobj_cpu = MadNLP._madnlp_unsafe_wrap(step.dobj_cpu, active_size, 1)
+    inf_pr_cpu = MadNLP._madnlp_unsafe_wrap(step.inf_pr_cpu, active_size, 1)
+    inf_du_cpu = MadNLP._madnlp_unsafe_wrap(step.inf_du_cpu, active_size, 1)
+    inf_compl_cpu = MadNLP._madnlp_unsafe_wrap(step.inf_compl_cpu, active_size, 1)
+    copyto!(dobj_cpu, MadNLP._madnlp_unsafe_wrap(step.dobj, active_size, 1))
+    copyto!(inf_pr_cpu, MadNLP._madnlp_unsafe_wrap(step.inf_pr, active_size, 1))
+    copyto!(inf_du_cpu, MadNLP._madnlp_unsafe_wrap(step.inf_du, active_size, 1))
+    copyto!(inf_compl_cpu, MadNLP._madnlp_unsafe_wrap(step.inf_compl, active_size, 1))
+    end
+    for_active_withindex(batch_solver, (i, solver) -> begin
+        dobj = dobj_cpu[i]
+        solver.inf_pr = inf_pr_cpu[i]
+        solver.inf_du = inf_du_cpu[i]
+        solver.inf_compl = inf_compl_cpu[i]
+        solver.best_complementarity = min(solver.best_complementarity, solver.inf_compl)
+    
+        if max(solver.inf_pr, solver.inf_du, solver.inf_compl) <= solver.opt.tol
+            solver.status = MadNLP.SOLVE_SUCCEEDED
+        elseif ((solver.inf_compl > solver.opt.divergence_tol * solver.best_complementarity) &&
+                (dobj > max(10.0 * abs(solver.obj_val), 1.0)))
+            solver.status = MadNLP.INFEASIBLE_PROBLEM_DETECTED
+        elseif solver.obj_val < - solver.opt.divergence_tol * max(10.0, abs(dobj), 1.0)
+            solver.status = MadNLP.DIVERGING_ITERATES
+        elseif solver.cnt.k >= solver.opt.max_iter
+            solver.status = MadNLP.MAXIMUM_ITERATIONS_EXCEEDED
+        elseif time()-solver.cnt.start_time >= solver.opt.max_wall_time
+            solver.status = MadNLP.MAXIMUM_WALLTIME_EXCEEDED
+        else
+            # Continue iterating - status remains unchanged
+        end
+    end)
+end
+
+# batch_func(batch_solver::UniformBatchSolver, ::typeof(batch_update_termination_criteria!)) =
+#     batch_update_termination_criteria!(batch_solver)
