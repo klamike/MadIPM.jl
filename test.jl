@@ -136,11 +136,11 @@ CASES = [
     # "89_pegase",
     # "118_ieee",
     # "300_ieee",
-    # "1354_pegase",
+    "1354_pegase",
     # "1888_rte",
     # "2869_pegase",
     # "6470_rte",
-    "9241_pegase",
+    # "9241_pegase",
     # "13659_pegase",
 ]
 
@@ -172,7 +172,7 @@ for case in CASES
     println("\t\tStarting $case")
     println()
     for batch_size in BATCH_SIZES
-        try
+        # try
             NVTX.@range "Warmup" begin
                 run_benchmark(case, batch_size, warmup=true)
             end
@@ -181,10 +181,10 @@ for case in CASES
                 run_benchmark(case, batch_size)
             end
             # end
-        catch e
-            @error "Error for $case x $batch_size: $e"
-            break
-        end
+        # catch e
+        #     @error "Error for $case x $batch_size: $e"
+        #     break
+        # end
     end
 end
 

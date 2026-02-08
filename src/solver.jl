@@ -199,8 +199,13 @@ end
     MPC Algorithm
 =#
 NVTX.@annotate function update_termination_criteria!(solver::MadNLP.AbstractMadNLPSolver)
+    NVTX.@range "Dual obj" begin
     dobj = dual_objective(solver) # dual objective
+    end
+    NVTX.@range "inf pr" begin
     solver.inf_pr = MadNLP.get_inf_pr(solver.c) / max(1.0, solver.norm_b)
+    end
+    NVTX.@range "inf du" begin
     solver.inf_du = MadNLP.get_inf_du(
         MadNLP.full(solver.f),
         MadNLP.full(solver.zl),
@@ -208,7 +213,10 @@ NVTX.@annotate function update_termination_criteria!(solver::MadNLP.AbstractMadN
         solver.jacl,
         1.0,
     ) / max(1.0, solver.norm_c)
+    end
     solver.inf_compl = get_optimality_gap(solver) / max(1.0, solver.norm_c)
+
+    NVTX.@range "big if" begin
     solver.best_complementarity = min(solver.best_complementarity, solver.inf_compl)
     
     if max(solver.inf_pr, solver.inf_du, solver.inf_compl) <= solver.opt.tol
@@ -224,6 +232,7 @@ NVTX.@annotate function update_termination_criteria!(solver::MadNLP.AbstractMadN
         solver.status = MadNLP.MAXIMUM_WALLTIME_EXCEEDED
     else
         # Continue iterating - status remains unchanged
+    end
     end
     return
 end
@@ -312,10 +321,18 @@ NVTX.@annotate function apply_step!(solver::MadNLP.AbstractMadNLPSolver)
 end
 
 NVTX.@annotate function evaluate_model!(solver::MadNLP.AbstractMadNLPSolver)
+    NVTX.@range "eval_f" begin
     solver.obj_val = MadNLP.eval_f_wrapper(solver, solver.x)
+    end
+    NVTX.@range "eval_c" begin
     MadNLP.eval_cons_wrapper!(solver, solver.c, solver.x)
+    end
+    NVTX.@range "eval_grad" begin
     MadNLP.eval_grad_f_wrapper!(solver, solver.f, solver.x)
+    end
+    NVTX.@range "eval_jac" begin
     update_jacl!(solver)
+    end
     return
 end
 NVTX.@annotate function is_done(solver)
