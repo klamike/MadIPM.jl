@@ -628,3 +628,25 @@ end
 
 batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.update_step_size!)) =
     batch_update_step_size!(batch_solver)
+
+
+function batch_update_regularization!(batch_solver::UniformBatchSolver)
+    bkkt = batch_solver.bkkt
+    solver1 = batch_solver[bkkt.batch_map_rev[1]]
+    @assert solver1.opt.regularization isa Union{
+        MadIPM.NoRegularization,
+        MadIPM.FixedRegularization,
+        MadIPM.AdaptiveRegularization,
+    }
+
+    MadIPM.update_regularization!(solver1, solver1.opt.regularization)
+
+    for_active(batch_solver, (i, solver) -> begin
+        solver.del_w = solver1.del_w
+        solver.del_c = solver1.del_c
+    end)
+end
+
+batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.update_regularization!)) =
+    batch_update_regularization!(batch_solver)
+
