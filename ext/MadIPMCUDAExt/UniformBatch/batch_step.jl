@@ -117,11 +117,11 @@ NVTX.@annotate function BatchStepData(solvers)
         fill!(VTC(undef, batch_size), zero(T)),
         fill!(VTC(undef, batch_size), zero(T)),
 
+        fill!(VT(undef, n_tot * batch_size), zero(T)),
+        fill!(VT(undef, n_tot * batch_size), zero(T)),
+        fill!(VT(undef, n_tot * batch_size), zero(T)),
+        fill!(VT(undef, n_tot * batch_size), zero(T)),
         fill!(VT(undef, batch_size), zero(T)),
-        fill!(VT(undef, n_tot * batch_size), zero(T)),
-        fill!(VT(undef, n_tot * batch_size), zero(T)),
-        fill!(VT(undef, n_tot * batch_size), zero(T)),
-        fill!(VT(undef, n_tot * batch_size), zero(T)),
         obj_scale_buf,
         con_scale_buf,
         fill!(VT(undef, nvar * batch_size), zero(T)),
@@ -738,9 +738,9 @@ function batch_update_regularization!(batch_solver::UniformBatchSolver)
         MadIPM.AdaptiveRegularization,
     }
 
-    MadIPM.update_regularization!(solver1, solver1.opt.regularization)
+    MadIPM.update_regularization!(solver1)
 
-    for_active(batch_solver, (i, solver) -> begin
+    for_active(batch_solver, solver -> begin
         solver.del_w = solver1.del_w
         solver.del_c = solver1.del_c
     end)
