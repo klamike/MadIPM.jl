@@ -118,7 +118,7 @@ NVTX.@annotate function batch_get_fraction_to_boundary_step!(batch_solver::Unifo
     active_size = bkkt.active_batch_size[]
     step = batch_solver.step
     nlb, nub = step.nlb, step.nub
-    T = eltype(batch_solver)
+    T = eltype(step.x_lr)
     inf_val = T(Inf)
 
     alpha_xl = MadNLP._madnlp_unsafe_wrap(step.alpha_xl, active_size, 1)
