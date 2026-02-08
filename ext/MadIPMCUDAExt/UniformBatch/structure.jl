@@ -11,12 +11,12 @@ struct UniformBatchSolver{VS,BK,BQ,SD} <: AbstractBatchSolver
         
         is_rhs_batch = true
         qp1 = first(models)
-        for qp in models[2:end]
-            if !QuadraticModels._check_only_rhs_differs(qp1, qp)
-                is_rhs_batch = false
-                break
-            end
-        end
+        # for qp in models[2:end]
+        #     if !QuadraticModels._check_only_rhs_differs(qp1, qp)
+        #         is_rhs_batch = false
+        #         break
+        #     end
+        # end
 
         bqp = if is_rhs_batch
             @info "Using RHSBatchQuadraticModel to accelerate `evaluate_model!`"
