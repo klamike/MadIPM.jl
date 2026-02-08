@@ -1,12 +1,29 @@
 abstract type AbstractBatchSolver end
 
-struct UniformBatchSolver{VS,BK,SD} <: AbstractBatchSolver
+struct UniformBatchSolver{VS,BK,BQ,SD} <: AbstractBatchSolver
     solvers::VS
     bkkt::BK
+    bqp::BQ
     step::SD
 
     function UniformBatchSolver(models::Vector{Model}; linear_solver::Type, kwargs...) where {Model<:NLPModels.AbstractNLPModel}
         batch_size = length(models)
+        
+        is_rhs_batch = true
+        qp1 = first(models)
+        for qp in models[2:end]
+            if !QuadraticModels._check_only_rhs_differs(qp1, qp)
+                is_rhs_batch = false
+                break
+            end
+        end
+
+        bqp = if is_rhs_batch
+            @info "Using RHSBatchQuadraticModel to accelerate `evaluate_model!`"
+            QuadraticModels.RHSBatchQuadraticModel(models)
+        else
+            models
+        end
 
         solvers = Vector{MadIPM.MPCSolver}(undef, batch_size)
         for i in 1:batch_size
@@ -33,7 +50,7 @@ struct UniformBatchSolver{VS,BK,SD} <: AbstractBatchSolver
         CUDA.enable_synchronization!(bkkt.batch_nzVal, false)
         CUDA.enable_synchronization!(bkkt.batch_rhs, false)
         step = BatchStepData(solver1, batch_size)
-        return new{typeof(solvers),typeof(bkkt),typeof(step)}(solvers, bkkt, step)
+        return new{typeof(solvers),typeof(bkkt),typeof(bqp),typeof(step)}(solvers, bkkt, bqp, step)
     end
 end
 
