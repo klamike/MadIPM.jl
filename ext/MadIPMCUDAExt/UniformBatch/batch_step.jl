@@ -312,7 +312,8 @@ NVTX.@annotate function batch_update_barrier!(batch_solver::UniformBatchSolver)
     active_size = bkkt.active_batch_size[]
     step = batch_solver.step
 
-    solver1 = batch_solver[bkkt.batch_map_rev[1]]# FIXME: global options
+    solver1 = batch_solver[bkkt.batch_map_rev[1]]  # FIXME: global options
+    @assert solver1.opt.barrier_update isa MadIPM.Mehrotra
     mu_min = solver1.opt.mu_min
     has_inequalities = (length(solver1.ind_llb) + length(solver1.ind_uub)) > 0
 
@@ -345,11 +346,11 @@ NVTX.@annotate function batch_prediction_step_size!(batch_solver::UniformBatchSo
     active_size = bkkt.active_batch_size[]
     step = batch_solver.step
     pack_prediction_step_data!(batch_solver)
-    fill!(MadNLP._madnlp_unsafe_wrap(step.tau, active_size, 1), one(eltype(batch_solver)))
+    fill!(MadNLP._madnlp_unsafe_wrap(step.tau, active_size, 1), one(eltype(step.x_lr)))
     batch_get_fraction_to_boundary_step!(batch_solver)
     batch_get_affine_complementarity_measure!(batch_solver)
     batch_get_correction!(batch_solver)
-    batch_update_barrier!(batch_solver)  # NOTE: there is only the Mehrotra rule, we ignore solver.opt.barrier_update
+    batch_update_barrier!(batch_solver)
     return
 end
 
