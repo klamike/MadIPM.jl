@@ -662,7 +662,7 @@ end
 batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.update_step_size!)) =
     batch_update_step_size!(batch_solver)
 
-function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where {VS,BK,BQ <: MadNLP.AbstractBatchNLPModel}
+function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where {VS,BK,BQ <: NLPModels.AbstractBatchNLPModel}
     bkkt = batch_solver.bkkt
     step = batch_solver.step
     active_size = bkkt.active_batch_size[]
@@ -714,16 +714,16 @@ function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where
         end
     end)
 end
-function _pack_x!(x, cb::AbstractCallback, x_full)
+function _pack_x!(x, cb::MadNLP.AbstractCallback, x_full)
     free = cb.fixed_handler.free
     copyto!(x, x_full[free])
 end
-function _pack_x!(x, cb::SparseCallback{T, VT, VI, NLP, FH}, x_full) where {T, VT, VI, NLP, FH<:MakeParameter}
+function _pack_x!(x, cb::MadNLP.SparseCallback{T, VT, VI, NLP, FH}, x_full) where {T, VT, VI, NLP, FH<:MadNLP.MakeParameter}
     free = cb.fixed_handler.free
     copyto!(x, x_full[free])
 end
 
-batch_func(batch_solver::UniformBatchSolver{VS,BK,BQ}, ::typeof(batch_evaluate_model!)) where {VS,BK,BQ <: MadNLP.AbstractBatchNLPModel} =
+batch_func(batch_solver::UniformBatchSolver{VS,BK,BQ}, ::typeof(batch_evaluate_model!)) where {VS,BK,BQ <: NLPModels.AbstractBatchNLPModel} =
     batch_evaluate_model!(batch_solver)
 
 function batch_update_regularization!(batch_solver::UniformBatchSolver)
