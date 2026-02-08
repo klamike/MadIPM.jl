@@ -238,7 +238,8 @@ NVTX.@annotate function batch_solve_system!(batch_solver::UniformBatchSolver)
     )
     batch_solve!(batch_solver.bkkt)
     for_active(batch_solver,
-        post_solve!
+        post_solve!,
+        MadIPM.check_residual!
     )
     return
 end

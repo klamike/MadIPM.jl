@@ -25,38 +25,24 @@ NVTX.@annotate function solve_system!(
 ) where T
     copyto!(MadNLP.full(d), MadNLP.full(p))
     MadNLP.solve!(solver.kkt, d)
-    # check_residual!(d, solver, p)
+    check_residual!(d, solver, p)
     return d
 end
 
+check_residual!(solver) = check_residual!(solver.d, solver, solver.p)
 NVTX.@annotate function check_residual!(d::MadNLP.UnreducedKKTVector{T}, solver, p) where T
     opt = solver.opt
 
     # Check residual
     w = solver._w1
-    NVTX.@range "copyto" begin
-        copyto!(MadNLP.full(w), MadNLP.full(p))
-    end
-    NVTX.@range "mul" begin
-        mul!(w, solver.kkt, d, -one(T), one(T))
-    end
-    NVTX.@range "norms" begin
-        norm_w = norm(MadNLP.full(w), Inf)
-        norm_p = norm(MadNLP.full(p), Inf)
-    end
-    NVTX.@range "ratio" begin
-        residual_ratio = norm_w / max(one(T), norm_p)
-    end
-    NVTX.@range "log" begin
-        MadNLP.@debug(
-            solver.logger,
-            @sprintf("Residual after linear solve: %6.2e", residual_ratio),
-            )
-    end
-    NVTX.@range "check" begin
-        if isnan(residual_ratio) || (opt.check_residual && (residual_ratio > opt.tol_linear_solve))
-            throw(MadNLP.SolveException)
-        end
+    copyto!(MadNLP.full(w), MadNLP.full(p))
+    mul!(w, solver.kkt, d, -one(T), one(T))
+    norm_w = norm(MadNLP.full(w), Inf)
+    norm_p = norm(MadNLP.full(p), Inf)
+    residual_ratio = norm_w / max(one(T), norm_p)
+    MadNLP.@debug(solver.logger, @sprintf("Residual after linear solve: %6.2e", residual_ratio))
+    if isnan(residual_ratio) || (opt.check_residual && (residual_ratio > opt.tol_linear_solve))
+        throw(MadNLP.SolveException)
     end
     return d
 end
