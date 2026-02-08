@@ -59,13 +59,15 @@ struct BatchStepData{T, VT<:AbstractVector{T}, VTC<:AbstractVector{T}}
     batch_size::Int
 end
 
-NVTX.@annotate function BatchStepData(solvers::Vector{<:MadIPM.MPCSolver{T,VT}}) where {T,VT}
+NVTX.@annotate function BatchStepData(solvers)
     batch_size = length(solvers)
     solver1 = solvers[1]
     nlb, nub = solver1.nlb, solver1.nub
     n_tot = length(solver1.kkt.pr_diag)
     nvar = NLPModels.get_nvar(solver1.nlp)
     ncon = NLPModels.get_ncon(solver1.nlp)
+    T = eltype(solver1.kkt.pr_diag)
+    VT = typeof(solver1.kkt.pr_diag)
     VTC = Vector{T}
     obj_scale_cpu = VTC(undef, batch_size)
     for i in 1:batch_size
