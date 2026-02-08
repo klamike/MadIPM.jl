@@ -49,7 +49,7 @@ struct UniformBatchSolver{VS,BK,BQ,SD} <: AbstractBatchSolver
         # TODO: profile to see if this is worth it
         CUDA.enable_synchronization!(bkkt.batch_nzVal, false)
         CUDA.enable_synchronization!(bkkt.batch_rhs, false)
-        step = BatchStepData(solver1, batch_size)
+        step = BatchStepData(solvers)
         return new{typeof(solvers),typeof(bkkt),typeof(bqp),typeof(step)}(solvers, bkkt, bqp, step)
     end
 end

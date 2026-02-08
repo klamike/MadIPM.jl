@@ -36,21 +36,47 @@ struct BatchStepData{T, VT<:AbstractVector{T}, VTC<:AbstractVector{T}}
     alpha_p_cpu::VTC
     alpha_d_cpu::VTC
     mu_cpu::VTC
+    obj_val_cpu::VTC
 
     pr_diag::VT
     buffer1::VT  # for ScaledSparseKKTSystem set_aug_diagonal_reg
     buffer2::VT  # for ScaledSparseKKTSystem set_aug_diagonal_reg
     scaling_factor::VT  # for ScaledSparseKKTSystem set_aug_diagonal_reg
+
+    obj_val::VT
+    obj_scale::VT
+    con_scale::VT
+    x_variable::VT
+    G::VT
+    c::VT
+    rhs::VT
+    
+    nvar::Int
+    ncon::Int
     nlb::Int
     nub::Int
     n_tot::Int
     batch_size::Int
 end
 
-NVTX.@annotate function BatchStepData(solver::MadIPM.MPCSolver{T,VT}, batch_size::Int) where {T,VT}
-    nlb, nub = solver.nlb, solver.nub
-    n_tot = length(solver.kkt.pr_diag)
+NVTX.@annotate function BatchStepData(solvers::Vector{<:MadIPM.MPCSolver{T,VT}}) where {T,VT}
+    batch_size = length(solvers)
+    solver1 = solvers[1]
+    nlb, nub = solver1.nlb, solver1.nub
+    n_tot = length(solver1.kkt.pr_diag)
+    nvar = NLPModels.get_nvar(solver1.nlp)
+    ncon = NLPModels.get_ncon(solver1.nlp)
     VTC = Vector{T}
+    obj_scale_cpu = VTC(undef, batch_size)
+    for i in 1:batch_size
+        obj_scale_cpu[i] = solvers[i].cb.obj_scale[]
+    end
+    obj_scale_buf = VT(undef, batch_size)
+    copyto!(obj_scale_buf, obj_scale_cpu)
+    con_scale_buf = VT(undef, ncon * batch_size)
+    for i in 1:batch_size
+        copyto!(MadNLP._madnlp_unsafe_wrap(con_scale_buf, ncon, (i - 1) * ncon + 1), solvers[i].cb.con_scale)
+    end
     BatchStepData{T,VT,VTC}(
         fill!(VT(undef, nlb * batch_size), zero(T)),
         fill!(VT(undef, nlb * batch_size), zero(T)),
@@ -87,13 +113,20 @@ NVTX.@annotate function BatchStepData(solver::MadIPM.MPCSolver{T,VT}, batch_size
         fill!(VTC(undef, batch_size), zero(T)),
         fill!(VTC(undef, batch_size), zero(T)),
         fill!(VTC(undef, batch_size), zero(T)),
+        fill!(VTC(undef, batch_size), zero(T)),
 
         fill!(VT(undef, n_tot * batch_size), zero(T)),
         fill!(VT(undef, n_tot * batch_size), zero(T)),
         fill!(VT(undef, n_tot * batch_size), zero(T)),
         fill!(VT(undef, n_tot * batch_size), zero(T)),
+        obj_scale_buf,
+        con_scale_buf,
+        fill!(VT(undef, nvar * batch_size), zero(T)),
+        fill!(VT(undef, nvar * batch_size), zero(T)),
+        fill!(VT(undef, ncon * batch_size), zero(T)),
+        fill!(VT(undef, ncon * batch_size), zero(T)),
 
-        nlb, nub, n_tot, batch_size,
+        nvar, ncon, nlb, nub, n_tot, batch_size,
     )
 end
 
@@ -638,6 +671,7 @@ function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where
     obj_scale = MadNLP._madnlp_unsafe_wrap(step.obj_scale, active_size, 1)
     con_scale = MadNLP._madnlp_unsafe_wrap(step.con_scale, active_size * step.ncon, 1)
     X = MadNLP._madnlp_unsafe_wrap(step.x_variable, active_size * step.nvar, 1)
+    G = MadNLP._madnlp_unsafe_wrap(step.G, active_size * step.nvar, 1)
     C = MadNLP._madnlp_unsafe_wrap(step.c, active_size * step.ncon, 1)
     rhs = MadNLP._madnlp_unsafe_wrap(step.rhs, active_size * step.ncon, 1)
 
@@ -647,6 +681,7 @@ function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where
             solver.cb,
             MadNLP.variable(solver.x),
         )
+        copyto!(MadNLP._madnlp_unsafe_wrap(step.rhs, step.ncon, (i - 1) * step.ncon + 1), solver.rhs)
     end)
 
     obj_val .= obj_scale .* NLPModels.batch_obj!(batch_solver.bqp, X, obj_val)
@@ -668,7 +703,7 @@ function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where
         G_i = MadNLP._madnlp_unsafe_wrap(G, step.nvar, (i - 1) * step.nvar + 1)
         _pack_x!(solver.f, solver.cb, G_i)
 
-        if !MadNLP.get_minimize(nlp)
+        if !MadNLP.get_minimize(solver.nlp)
             T = eltype(step.x_lr)
             solver.obj_val *= -one(T)
             MadNLP.variable(solver.f) .*= -one(T)
