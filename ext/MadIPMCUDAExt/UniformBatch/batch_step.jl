@@ -668,43 +668,48 @@ batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.update_step_size!))
 function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where {VS,BK,BQ <: NLPModels.AbstractBatchNLPModel}
     bkkt = batch_solver.bkkt
     step = batch_solver.step
-    active_size = bkkt.active_batch_size[]
+    batch_size = step.batch_size
+    nvar, ncon = step.nvar, step.ncon
 
-    obj_val = MadNLP._madnlp_unsafe_wrap(step.obj_val, active_size, 1)
-    obj_scale = MadNLP._madnlp_unsafe_wrap(step.obj_scale, active_size, 1)
-    con_scale = MadNLP._madnlp_unsafe_wrap(step.con_scale, active_size * step.ncon, 1)
-    X = MadNLP._madnlp_unsafe_wrap(step.x_variable, active_size * step.nvar, 1)
-    G = MadNLP._madnlp_unsafe_wrap(step.G, active_size * step.nvar, 1)
-    C = MadNLP._madnlp_unsafe_wrap(step.c, active_size * step.ncon, 1)
-    rhs = MadNLP._madnlp_unsafe_wrap(step.rhs, active_size * step.ncon, 1)
+    # Batch API expects full batch_size; use full buffers
+    obj_val = MadNLP._madnlp_unsafe_wrap(step.obj_val, batch_size, 1)
+    obj_scale = MadNLP._madnlp_unsafe_wrap(step.obj_scale, batch_size, 1)
+    con_scale = MadNLP._madnlp_unsafe_wrap(step.con_scale, batch_size * ncon, 1)
+    X = MadNLP._madnlp_unsafe_wrap(step.x_variable, batch_size * nvar, 1)
+    G = MadNLP._madnlp_unsafe_wrap(step.G, batch_size * nvar, 1)
+    C = MadNLP._madnlp_unsafe_wrap(step.c, batch_size * ncon, 1)
+    rhs = MadNLP._madnlp_unsafe_wrap(step.rhs, batch_size * ncon, 1)
 
-    for_active_withindex(batch_solver, (i, solver) -> begin
+    # Pack X and rhs by batch index (all solvers)
+    for j in 1:batch_size
+        solver = batch_solver[j]
         MadNLP.unpack_x!(
-            MadNLP._madnlp_unsafe_wrap(X, step.nvar, (i - 1) * step.nvar + 1),
+            MadNLP._madnlp_unsafe_wrap(step.x_variable, nvar, (j - 1) * nvar + 1),
             solver.cb,
             MadNLP.variable(solver.x),
         )
-        copyto!(MadNLP._madnlp_unsafe_wrap(step.rhs, step.ncon, (i - 1) * step.ncon + 1), solver.rhs)
-    end)
+        copyto!(MadNLP._madnlp_unsafe_wrap(step.rhs, ncon, (j - 1) * ncon + 1), solver.rhs)
+    end
 
     obj_val .= obj_scale .* NLPModels.batch_obj!(batch_solver.bqp, X, obj_val)
     G .= obj_scale .* NLPModels.batch_grad!(batch_solver.bqp, X, G)
     C .= con_scale .* NLPModels.batch_cons!(batch_solver.bqp, X, C) .- rhs
 
-    obj_val_cpu = MadNLP._madnlp_unsafe_wrap(step.obj_val_cpu, active_size, 1)
+    obj_val_cpu = MadNLP._madnlp_unsafe_wrap(step.obj_val_cpu, batch_size, 1)
     copyto!(obj_val_cpu, obj_val)
     for_active_withindex(batch_solver, (i, solver) -> begin
+        j = bkkt.batch_map_rev[i]  # batch index for this active solver
         NVTX.@range "unpack obj" begin
-        solver.obj_val = obj_val_cpu[i]
+        solver.obj_val = obj_val_cpu[j]
         end
         NVTX.@range "unpack con" begin
-        C_i = MadNLP._madnlp_unsafe_wrap(C, step.ncon, (i - 1) * step.ncon + 1)
-        view(C_i, solver.ind_ineq) .-= MadNLP.slack(solver.x)
-        solver.c .= C_i
+        C_j = MadNLP._madnlp_unsafe_wrap(C, ncon, (j - 1) * ncon + 1)
+        view(C_j, solver.ind_ineq) .-= MadNLP.slack(solver.x)
+        solver.c .= C_j
         end
         NVTX.@range "unpack grad" begin
-        G_i = MadNLP._madnlp_unsafe_wrap(G, step.nvar, (i - 1) * step.nvar + 1)
-        _pack_x!(MadNLP.variable(solver.f), solver.cb, G_i)
+        G_j = MadNLP._madnlp_unsafe_wrap(G, nvar, (j - 1) * nvar + 1)
+        _pack_x!(MadNLP.variable(solver.f), solver.cb, G_j)
 
         if !MadNLP.get_minimize(solver.nlp)
             T = eltype(step.x_lr)
