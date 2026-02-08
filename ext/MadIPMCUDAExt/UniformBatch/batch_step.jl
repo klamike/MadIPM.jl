@@ -13,6 +13,7 @@ struct BatchStepData{T, VT<:AbstractVector{T}, VTC<:AbstractVector{T}}
     dzu::VT
     work_lb::VT
     work_ub::VT
+
     alpha_xl::VT
     alpha_xu::VT
     alpha_zl::VT
@@ -24,17 +25,22 @@ struct BatchStepData{T, VT<:AbstractVector{T}, VTC<:AbstractVector{T}}
     mu_new::VT
     sum_lb::VT
     sum_ub::VT
+    tau::VT
+    mu::VT
+
+    norm_w::VTC
+    norm_p::VTC
+    residual_ratio::VTC
     mu_curr_cpu::VTC
     mu_new_cpu::VTC
     alpha_p_cpu::VTC
     alpha_d_cpu::VTC
     mu_cpu::VTC
+
     pr_diag::VT
     buffer1::VT  # for ScaledSparseKKTSystem set_aug_diagonal_reg
     buffer2::VT  # for ScaledSparseKKTSystem set_aug_diagonal_reg
     scaling_factor::VT  # for ScaledSparseKKTSystem set_aug_diagonal_reg
-    tau::VT
-    mu::VT
     nlb::Int
     nub::Int
     n_tot::Int
@@ -58,6 +64,7 @@ NVTX.@annotate function BatchStepData(solver::MadIPM.MPCSolver{T,VT}, batch_size
         fill!(VT(undef, nub * batch_size), zero(T)),
         fill!(VT(undef, nlb * batch_size), zero(T)),
         fill!(VT(undef, nub * batch_size), zero(T)),
+
         fill!(VT(undef, batch_size), zero(T)),
         fill!(VT(undef, batch_size), zero(T)),
         fill!(VT(undef, batch_size), zero(T)),
@@ -69,17 +76,23 @@ NVTX.@annotate function BatchStepData(solver::MadIPM.MPCSolver{T,VT}, batch_size
         fill!(VT(undef, batch_size), zero(T)),
         fill!(VT(undef, batch_size), zero(T)),
         fill!(VT(undef, batch_size), zero(T)),
+        fill!(VT(undef, batch_size), zero(T)),
+        fill!(VT(undef, batch_size), zero(T)),
+
         fill!(VTC(undef, batch_size), zero(T)),
         fill!(VTC(undef, batch_size), zero(T)),
         fill!(VTC(undef, batch_size), zero(T)),
         fill!(VTC(undef, batch_size), zero(T)),
         fill!(VTC(undef, batch_size), zero(T)),
+        fill!(VTC(undef, batch_size), zero(T)),
+        fill!(VTC(undef, batch_size), zero(T)),
+        fill!(VTC(undef, batch_size), zero(T)),
+
         fill!(VT(undef, n_tot * batch_size), zero(T)),
         fill!(VT(undef, n_tot * batch_size), zero(T)),
         fill!(VT(undef, n_tot * batch_size), zero(T)),
         fill!(VT(undef, n_tot * batch_size), zero(T)),
-        fill!(VT(undef, n_tot * batch_size), zero(T)),
-        fill!(VT(undef, n_tot * batch_size), zero(T)),
+
         nlb, nub, n_tot, batch_size,
     )
 end
