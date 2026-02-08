@@ -629,6 +629,67 @@ end
 batch_func(batch_solver::UniformBatchSolver, ::typeof(MadIPM.update_step_size!)) =
     batch_update_step_size!(batch_solver)
 
+function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where {VS,BK,BQ <: MadNLP.AbstractBatchNLPModel}
+    bkkt = batch_solver.bkkt
+    step = batch_solver.step
+    active_size = bkkt.active_batch_size[]
+
+    obj_val = MadNLP._madnlp_unsafe_wrap(step.obj_val, active_size, 1)
+    obj_scale = MadNLP._madnlp_unsafe_wrap(step.obj_scale, active_size, 1)
+    con_scale = MadNLP._madnlp_unsafe_wrap(step.con_scale, active_size * step.ncon, 1)
+    X = MadNLP._madnlp_unsafe_wrap(step.x_variable, active_size * step.nvar, 1)
+    C = MadNLP._madnlp_unsafe_wrap(step.c, active_size * step.ncon, 1)
+    rhs = MadNLP._madnlp_unsafe_wrap(step.rhs, active_size * step.ncon, 1)
+
+    for_active_withindex(batch_solver, (i, solver) -> begin
+        MadNLP.unpack_x!(
+            MadNLP._madnlp_unsafe_wrap(X, step.nvar, (i - 1) * step.nvar + 1),
+            solver.cb,
+            MadNLP.variable(solver.x),
+        )
+    end)
+
+    obj_val .= obj_scale .* NLPModels.batch_obj!(batch_solver.bqp, X, obj_val)
+    G .= obj_scale .* NLPModels.batch_grad!(batch_solver.bqp, X, G)
+    C .= con_scale .* NLPModels.batch_cons!(batch_solver.bqp, X, C) .- rhs
+
+    obj_val_cpu = MadNLP._madnlp_unsafe_wrap(step.obj_val_cpu, active_size, 1)
+    copyto!(obj_val_cpu, obj_val)
+    for_active_withindex(batch_solver, (i, solver) -> begin
+        NVTX.@range "unpack obj" begin
+        solver.obj_val = obj_val_cpu[i]
+        end
+        NVTX.@range "unpack con" begin
+        C_i = MadNLP._madnlp_unsafe_wrap(C, step.ncon, (i - 1) * step.ncon + 1)
+        view(C_i, solver.ind_ineq) .-= MadNLP.slack(solver.x)
+        solver.c .= C_i
+        end
+        NVTX.@range "unpack grad" begin
+        G_i = MadNLP._madnlp_unsafe_wrap(G, step.nvar, (i - 1) * step.nvar + 1)
+        _pack_x!(solver.f, solver.cb, G_i)
+
+        if !MadNLP.get_minimize(nlp)
+            T = eltype(step.x_lr)
+            solver.obj_val *= -one(T)
+            MadNLP.variable(solver.f) .*= -one(T)
+        end
+        end
+        NVTX.@range "update_jacl" begin
+        MadIPM.update_jacl!(solver)  # TODO: batched spmv
+        end
+    end)
+end
+function _pack_x!(x, cb::AbstractCallback, x_full)
+    free = cb.fixed_handler.free
+    copyto!(x, x_full[free])
+end
+function _pack_x!(x, cb::SparseCallback{T, VT, VI, NLP, FH}, x_full) where {T, VT, VI, NLP, FH<:MakeParameter}
+    free = cb.fixed_handler.free
+    copyto!(x, x_full[free])
+end
+
+batch_func(batch_solver::UniformBatchSolver{VS,BK,BQ}, ::typeof(batch_evaluate_model!)) where {VS,BK,BQ <: MadNLP.AbstractBatchNLPModel} =
+    batch_evaluate_model!(batch_solver)
 
 function batch_update_regularization!(batch_solver::UniformBatchSolver)
     bkkt = batch_solver.bkkt
