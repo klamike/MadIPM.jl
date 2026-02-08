@@ -704,7 +704,7 @@ function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where
         end
         NVTX.@range "unpack grad" begin
         G_i = MadNLP._madnlp_unsafe_wrap(G, step.nvar, (i - 1) * step.nvar + 1)
-        _pack_x!(solver.f, solver.cb, G_i)
+        _pack_x!(MadNLP.variable(solver.f), solver.cb, G_i)
 
         if !MadNLP.get_minimize(solver.nlp)
             T = eltype(step.x_lr)
@@ -718,15 +718,14 @@ function batch_evaluate_model!(batch_solver::UniformBatchSolver{VS,BK,BQ}) where
     end)
 end
 function _pack_x!(x, cb::MadNLP.AbstractCallback, x_full)
-    free = cb.fixed_handler.free
-    copyto!(x, x_full[free])
+    copyto!(x, x_full)
 end
 function _pack_x!(x, cb::MadNLP.SparseCallback{T, VT, VI, NLP, FH}, x_full) where {T, VT, VI, NLP, FH<:MadNLP.MakeParameter}
     free = cb.fixed_handler.free
     copyto!(x, x_full[free])
 end
 
-batch_func(batch_solver::UniformBatchSolver{VS,BK,BQ}, ::typeof(batch_evaluate_model!)) where {VS,BK,BQ <: NLPModels.AbstractBatchNLPModel} =
+batch_func(batch_solver::UniformBatchSolver{VS,BK,BQ}, ::typeof(MadIPM.evaluate_model!)) where {VS,BK,BQ <: NLPModels.AbstractBatchNLPModel} =
     batch_evaluate_model!(batch_solver)
 
 function batch_update_regularization!(batch_solver::UniformBatchSolver)

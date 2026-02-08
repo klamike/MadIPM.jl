@@ -20,7 +20,7 @@ struct UniformBatchSolver{VS,BK,BQ,SD} <: AbstractBatchSolver
 
         bqp = if is_rhs_batch
             @info "Using RHSBatchQuadraticModel to accelerate `evaluate_model!`"
-            QuadraticModels.RHSBatchQuadraticModel(models)
+            QuadraticModels.RHSBatchQuadraticModel(models, MT=CuArray{Float64, 2})
         else
             models
         end
