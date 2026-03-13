@@ -29,11 +29,13 @@ struct UniformBatchWorkspace{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, MI
 
     _term_gpu::MI64
     _term_cpu::Vector{Int64}
-    _norm_gpu::MT
-    _norm_cpu::Vector{T}
-    _norm_cpu2::Vector{T}
+    _norm_gpu_w::MT
+    _norm_gpu_p::MT
+    _ls_error::MI
 
     active_mask::MT
+
+    scratch::MT
 
     bx::MT
     bf::VT
@@ -41,8 +43,8 @@ struct UniformBatchWorkspace{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, MI
     bv::MT
 end
 
-function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, nlb::Int, nub::Int, batch_size::Int;
-                        nvar_nlp::Int=0, ncon::Int=0) where {T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}}
+function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, n::Int, m::Int, nlb::Int, nub::Int, batch_size::Int;
+                        nvar_nlp::Int=0) where {T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}}
     _proto = MT(undef, 1, batch_size)
     MI = typeof(similar(_proto, Int32))
     MI64 = typeof(similar(_proto, Int64))
@@ -67,14 +69,15 @@ function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, nlb::Int, nub::Int, batch
         fill(MadNLP.INITIAL, batch_size),  # status
         similar(_proto, Int64),    # _term_gpu
         zeros(Int64, batch_size),  # _term_cpu
-        MT(undef, 1, batch_size),  # _norm_gpu
-        zeros(T, batch_size),      # _norm_cpu
-        zeros(T, batch_size),      # _norm_cpu2
+        MT(undef, 1, batch_size),  # _norm_gpu_w
+        MT(undef, 1, batch_size),  # _norm_gpu_p
+        fill!(similar(_proto, Int32), zero(Int32)),  # _ls_error
         fill!(MT(undef, 1, batch_size), one(T)),  # active_mask
+        MT(undef, max(n, m, nlb, nub, 1), batch_size),  # scratch
         MT(undef, nvar_nlp, batch_size),   # bx
         VT(undef, batch_size),  # bf
         MT(undef, nvar_nlp, batch_size),   # bg
-        MT(undef, ncon, batch_size),       # bv
+        MT(undef, m, batch_size),          # bv
     )
 end
 
@@ -84,7 +87,6 @@ mutable struct UniformBatchMPCSolver{T, MT, VT, VI, BM, BCB} <: AbstractBatchMPC
     d::BatchUnreducedKKTVector{T, MT, VT}
     p::BatchUnreducedKKTVector{T, MT, VT}
     _w1::BatchUnreducedKKTVector{T, MT, VT}
-    _w2::BatchUnreducedKKTVector{T, MT, VT}
 
     x::BatchPrimalVector{T, MT}
     xl::BatchPrimalVector{T, MT}
@@ -181,7 +183,6 @@ function UniformBatchMPCSolver(
     batch_d  = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
     batch_p  = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
     batch_w1 = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
-    batch_w2 = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
 
     batch_correction_lb = BatchVector(MT, VT, nlb, batch_size)
     batch_correction_ub = BatchVector(MT, VT, nub, batch_size)
@@ -190,15 +191,15 @@ function UniformBatchMPCSolver(
     batch_c             = BatchVector(MT, VT, m, batch_size)
     batch_rhs           = BatchVector(MT, VT, m, batch_size)
 
-    workspace = UniformBatchWorkspace(MT, VT, nlb, nub, batch_size;
-                               nvar_nlp=nvar_nlp, ncon=m)
+    workspace = UniformBatchWorkspace(MT, VT, n, m, nlb, nub, batch_size;
+                               nvar_nlp=nvar_nlp)
 
     batch_del_w = fill!(MT(undef, 1, batch_size), zero(T))
     batch_del_c = fill!(MT(undef, 1, batch_size), zero(T))
 
     return UniformBatchMPCSolver{T, MT, VT, VI, typeof(bnlp), typeof(bcb)}(
         batch_size,
-        batch_d, batch_p, batch_w1, batch_w2,
+        batch_d, batch_p, batch_w1,
         batch_x, batch_xl, batch_xu, batch_zl, batch_zu, batch_f,
         batch_y, batch_c, batch_jacl, batch_rhs,
         batch_correction_lb, batch_correction_ub,

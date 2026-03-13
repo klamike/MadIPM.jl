@@ -69,22 +69,23 @@ function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
 
     ws = batch_solver.workspace
     nlb_init, nub_init = batch_solver.d.nlb, batch_solver.d.nub
+    bs = batch_solver.batch_size
     _s1 = ws.alpha_xl  # (1,bs) scratch
     _s2 = ws.alpha_xu  # (1,bs) scratch
 
     # delta_x = max(0, -1.5 * min(xl-lb, 0), -1.5 * min(ub-xu, 0))
     if nlb_init > 0
-        _scratch_lb = MadNLP.dual_lb(batch_solver._w2)
+        _scratch_lb = _scratch_view(ws.scratch, nlb_init, bs)
         @. _scratch_lb = xl - lb
-        minimum!(_s1, _scratch_lb)
+        batch_minimum!(_s1, _scratch_lb)
         @. _s1 = min(_s1, zero(T))  # clamp: init=0.0 behavior
     else
         fill!(_s1, zero(T))
     end
     if nub_init > 0
-        _scratch_ub = MadNLP.dual_ub(batch_solver._w2)
+        _scratch_ub = _scratch_view(ws.scratch, nub_init, bs)
         @. _scratch_ub = ub - xu
-        minimum!(_s2, _scratch_ub)
+        batch_minimum!(_s2, _scratch_ub)
         @. _s2 = min(_s2, zero(T))
     else
         fill!(_s2, zero(T))
@@ -94,13 +95,13 @@ function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
 
     # delta_s = max(0, -1.5 * min(zl, 0), -1.5 * min(zu, 0))
     if nlb_init > 0
-        minimum!(_s1, zl)
+        batch_minimum!(_s1, zl)
         @. _s1 = min(_s1, zero(T))
     else
         fill!(_s1, zero(T))
     end
     if nub_init > 0
-        minimum!(_s2, zu)
+        batch_minimum!(_s2, zu)
         @. _s2 = min(_s2, zero(T))
     else
         fill!(_s2, zero(T))
@@ -117,32 +118,32 @@ function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
     μ = ws.mu_affine  # (1,bs) scratch
     fill!(μ, zero(T))
     if nlb_init > 0
-        _scratch_lb = MadNLP.dual_lb(batch_solver._w2)
+        _scratch_lb = _scratch_view(ws.scratch, nlb_init, bs)
         @. _scratch_lb = xl * zl
-        sum!(ws.sum_lb, _scratch_lb)
+        batch_sum!(ws.sum_lb, _scratch_lb)
         μ .+= ws.sum_lb
         @. _scratch_lb = lb * zl
-        sum!(ws.sum_lb, _scratch_lb)
+        batch_sum!(ws.sum_lb, _scratch_lb)
         μ .-= ws.sum_lb
     end
     if nub_init > 0
-        _scratch_ub = MadNLP.dual_ub(batch_solver._w2)
+        _scratch_ub = _scratch_view(ws.scratch, nub_init, bs)
         @. _scratch_ub = ub * zu
-        sum!(ws.sum_ub, _scratch_ub)
+        batch_sum!(ws.sum_ub, _scratch_ub)
         @. _scratch_ub = xu * zu
-        sum!(ws.sum_lb, _scratch_ub)
+        batch_sum!(ws.sum_lb, _scratch_ub)
         ws.sum_ub .-= ws.sum_lb
         μ .+= ws.sum_ub
     end
 
     # delta_x2 = μ / (2 * (sum(zl) + sum(zu)))
     if nlb_init > 0
-        sum!(ws.sum_lb, zl)
+        batch_sum!(ws.sum_lb, zl)
     else
         fill!(ws.sum_lb, zero(T))
     end
     if nub_init > 0
-        sum!(ws.sum_ub, zu)
+        batch_sum!(ws.sum_ub, zu)
     else
         fill!(ws.sum_ub, zero(T))
     end
@@ -151,16 +152,16 @@ function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
 
     # delta_s2 = μ / (2 * (sum(xl-lb) + sum(ub-xu)))
     if nlb_init > 0
-        _scratch_lb = MadNLP.dual_lb(batch_solver._w2)
+        _scratch_lb = _scratch_view(ws.scratch, nlb_init, bs)
         @. _scratch_lb = xl - lb
-        sum!(ws.sum_lb, _scratch_lb)
+        batch_sum!(ws.sum_lb, _scratch_lb)
     else
         fill!(ws.sum_lb, zero(T))
     end
     if nub_init > 0
-        _scratch_ub = MadNLP.dual_ub(batch_solver._w2)
+        _scratch_ub = _scratch_view(ws.scratch, nub_init, bs)
         @. _scratch_ub = ub - xu
-        sum!(ws.sum_ub, _scratch_ub)
+        batch_sum!(ws.sum_ub, _scratch_ub)
     else
         fill!(ws.sum_ub, zero(T))
     end
@@ -264,6 +265,35 @@ function initialize!(batch_solver::AbstractBatchMPCSolver{T}) where T
     return
 end
 
+function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
+    ds = T(opt.divergence_scale)
+    tol = T(opt.tol)
+    div_tol = T(opt.divergence_tol)
+    Int_ERROR = Int(MadNLP.INTERNAL_ERROR)
+    Int_SOLVED = Int(MadNLP.SOLVE_SUCCEEDED)
+    Int_INFEASIBLE = Int(MadNLP.INFEASIBLE_PROBLEM_DETECTED)
+    Int_DIVERGING = Int(MadNLP.DIVERGING_ITERATES)
+    Int_REGULAR = Int(MadNLP.REGULAR)
+    @. ws._term_gpu = ifelse(
+        ws._ls_error > zero(Int32),
+        Int_ERROR,
+        ifelse(
+            max(ws.inf_pr, ws.inf_du, ws.inf_compl) <= tol,
+            Int_SOLVED,
+            ifelse(
+                (ws.inf_compl > div_tol * ws.best_complementarity) &
+                (ws.dual_obj > max(ds * abs(ws.obj_val), one(T))),
+                Int_INFEASIBLE,
+                ifelse(
+                    ws.obj_val < -(div_tol * max(ds, abs(ws.dual_obj), one(T))),
+                    Int_DIVERGING,
+                    Int_REGULAR,
+                ),
+            ),
+        ),
+    )
+end
+
 function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) where T
     ws = batch_solver.workspace
     opt = batch_solver.opt
@@ -273,10 +303,11 @@ function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) w
     bs = batch_solver.batch_size
     nlb, nub = batch_solver.d.nlb, batch_solver.d.nub
 
-    _scratch_n = MadNLP.primal(batch_solver._w2)
-    _scratch_m = MadNLP.dual(batch_solver._w2)
-    _scratch_lb = MadNLP.dual_lb(batch_solver._w2)
-    _scratch_ub = MadNLP.dual_ub(batch_solver._w2)
+    n, m = batch_solver.d.n, batch_solver.d.m
+    _scratch_n  = _scratch_view(ws.scratch, n,   bs)
+    _scratch_m  = _scratch_view(ws.scratch, m,   bs)
+    _scratch_lb = _scratch_view(ws.scratch, nlb, bs)
+    _scratch_ub = _scratch_view(ws.scratch, nub, bs)
 
     get_inf_pr!(ws.inf_pr, MadNLP.full(batch_solver.c), _scratch_m)
     @. ws.inf_pr /= max(one(T), ws.norm_b)
@@ -294,29 +325,16 @@ function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) w
         lower(zl), lower(xl), upper(zu), upper(xu),
         _scratch_m, _scratch_lb, _scratch_ub, ws.sum_lb, ws.sum_ub, nlb, nub)
 
-    ds = T(opt.divergence_scale)
-    tol = T(opt.tol)
-    div_tol = T(opt.divergence_tol)
-    Int_SOLVED = Int(MadNLP.SOLVE_SUCCEEDED)
-    Int_INFEASIBLE = Int(MadNLP.INFEASIBLE_PROBLEM_DETECTED)
-    Int_DIVERGING = Int(MadNLP.DIVERGING_ITERATES)
-    Int_REGULAR = Int(MadNLP.REGULAR)
-    @. ws._term_gpu = ifelse(
-        max(ws.inf_pr, ws.inf_du, ws.inf_compl) <= tol,
-        Int_SOLVED,
-        ifelse(
-            (ws.inf_compl > div_tol * ws.best_complementarity) &
-            (ws.dual_obj > max(ds * abs(ws.obj_val), one(T))),
-            Int_INFEASIBLE,
-            ifelse(
-                ws.obj_val < -(div_tol * max(ds, abs(ws.dual_obj), one(T))),
-                Int_DIVERGING,
-                Int_REGULAR,
-            ),
-        ),
-    )
-    copyto!(ws._term_cpu, vec(ws._term_gpu))
+    compute_term_gpu!(ws, opt)
+    return
+end
 
+function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
+    ws = batch_solver.workspace
+    opt = batch_solver.opt
+    bcnt = batch_solver.batch_cnt
+    bs = batch_solver.batch_size
+    copyto!(ws._term_cpu, vec(ws._term_gpu))
     walltime_hit = time() - bcnt.start_time[] >= opt.max_wall_time
     @inbounds for i in 1:bs
         ws.status[i] != MadNLP.REGULAR && continue
@@ -329,7 +347,6 @@ function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) w
             ws.status[i] = MadNLP.MAXIMUM_WALLTIME_EXCEEDED
         end
     end
-    return
 end
 
 function solve_system!(
@@ -337,7 +354,6 @@ function solve_system!(
     batch_solver::AbstractBatchMPCSolver{T},
     p::BatchUnreducedKKTVector{T},
 ) where T
-    opt = batch_solver.opt
     copyto!(MadNLP.full(d), MadNLP.full(p))
     MadNLP.solve_kkt!(batch_solver.kkt, batch_solver)
 
@@ -354,24 +370,17 @@ function solve_system!(
         end
     end
 
+    opt = batch_solver.opt
     ws = batch_solver.workspace
+    check_res = opt.check_residual
+    tol_ls = T(opt.tol_linear_solve)
     _fw = MadNLP.full(w)
     _fw .= abs.(_fw)
-    maximum!(ws._norm_gpu, _fw)                          # (1,bs) per-instance norm_w
-    copyto!(ws._norm_cpu, vec(ws._norm_gpu))
+    batch_maximum!(ws._norm_gpu_w, _fw)                  # (1,bs) per-instance norm_w
     _fw .= abs.(MadNLP.full(p))
-    maximum!(ws._norm_gpu, _fw)                          # (1,bs) per-instance norm_p
-    copyto!(ws._norm_cpu2, vec(ws._norm_gpu))
-
-    @inbounds for i in 1:bs
-        bkkt.batch_map[i] == 0 && continue
-        nw = ws._norm_cpu[i]
-        np = ws._norm_cpu2[i]
-        ratio = nw / max(one(T), np)
-        if isnan(ratio) || (opt.check_residual && (ratio > opt.tol_linear_solve))
-            ws.status[i] = MadNLP.INTERNAL_ERROR
-        end
-    end
+    batch_maximum!(ws._norm_gpu_p, _fw)                  # (1,bs) per-instance norm_p
+    @. ws._norm_gpu_w /= max(one(T), ws._norm_gpu_p)    # ratio in-place
+    @. ws._ls_error |= isnan(ws._norm_gpu_w) | (check_res & (ws._norm_gpu_w > tol_ls))
     return d
 end
 
@@ -482,6 +491,7 @@ function evaluate_model!(batch_solver::AbstractBatchMPCSolver)
 end
 
 function mpc_step!(batch_solver::AbstractBatchMPCSolver)
+    fill!(batch_solver.workspace._ls_error, zero(Int32))
     factorize_system!(batch_solver)
     prediction_step!(batch_solver)
     mehrotra_correction_direction!(batch_solver)
@@ -501,6 +511,7 @@ function mpc!(batch_solver::AbstractBatchMPCSolver)
     while true
         MadNLP.print_iter(batch_solver)
         update_termination_criteria!(batch_solver)
+        update_termination_status!(batch_solver)
         update_active_set!(batch_solver.kkt, batch_solver.workspace.status)
         batch_solver.kkt.active_batch_size[] == 0 && return
         _update_active_mask!(batch_solver)

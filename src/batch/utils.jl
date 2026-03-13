@@ -8,6 +8,15 @@ function _csc_with_nzval(A::SparseArrays.SparseMatrixCSC, nzval, n)
     return SparseArrays.SparseMatrixCSC(n, n, SparseArrays.getcolptr(A), SparseArrays.rowvals(A), nzval)
 end
 
+_scratch_view(scratch::AbstractMatrix, k, bs) = view(scratch, 1:k, :)
+
+batch_mapreduce!(f, op, neutral, out::AbstractMatrix, srcs::AbstractMatrix...) =
+    (out .= mapreduce(f, op, srcs...; dims=1, init=neutral))
+
+batch_maximum!(out::AbstractMatrix, src::AbstractMatrix) = maximum!(out, src)
+batch_minimum!(out::AbstractMatrix, src::AbstractMatrix) = minimum!(out, src)
+batch_sum!(out::AbstractMatrix, src::AbstractMatrix) = sum!(out, src)
+
 function zero_inactive_step!(batch_solver::AbstractBatchMPCSolver{T}) where T
     ws = batch_solver.workspace
     ws.alpha_p .*= ws.active_mask
