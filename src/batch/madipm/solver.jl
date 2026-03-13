@@ -292,6 +292,7 @@ function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
             ),
         ),
     )
+    maximum!(ws._any_nonregular_gpu, ws._term_gpu)
 end
 
 function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) where T
@@ -334,8 +335,18 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
     opt = batch_solver.opt
     bcnt = batch_solver.batch_cnt
     bs = batch_solver.batch_size
-    copyto!(ws._term_cpu, vec(ws._term_gpu))
+    Int_REGULAR = Int64(Int(MadNLP.REGULAR))
+
     walltime_hit = time() - bcnt.start_time[] >= opt.max_wall_time
+    max_iter_hit = walltime_hit ? false :
+        any(ws.status[i] == MadNLP.REGULAR && bcnt.k[i] >= opt.max_iter for i in 1:bs)
+
+    if !walltime_hit && !max_iter_hit
+        copyto!(ws._any_nonregular_cpu, vec(ws._any_nonregular_gpu))
+        ws._any_nonregular_cpu[1] == Int_REGULAR && return false
+    end
+
+    copyto!(ws._term_cpu, vec(ws._term_gpu))
     @inbounds for i in 1:bs
         ws.status[i] != MadNLP.REGULAR && continue
         code = MadNLP.Status(ws._term_cpu[i])
@@ -347,6 +358,7 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
             ws.status[i] = MadNLP.MAXIMUM_WALLTIME_EXCEEDED
         end
     end
+    return true
 end
 
 function solve_system!(
@@ -513,10 +525,12 @@ function mpc!(batch_solver::AbstractBatchMPCSolver)
     while true
         MadNLP.print_iter(batch_solver)
         update_termination_criteria!(batch_solver)
-        update_termination_status!(batch_solver)
-        update_active_set!(batch_solver.kkt, batch_solver.workspace.status)
-        batch_solver.kkt.active_batch_size[] == 0 && return
-        _update_active_mask!(batch_solver)
+        changed = update_termination_status!(batch_solver)
+        if changed
+            update_active_set!(batch_solver.kkt, batch_solver.workspace.status)
+            batch_solver.kkt.active_batch_size[] == 0 && return
+            _update_active_mask!(batch_solver)
+        end
         mpc_step!(batch_solver)
     end
 end
