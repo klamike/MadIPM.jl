@@ -90,9 +90,9 @@ end
 mutable struct UniformBatchMPCSolver{T, MT, VT, VI, BM, BCB} <: AbstractBatchMPCSolver{T}
     batch_size::Int
 
-    d::BatchUnreducedKKTVector{T, MT, VT}
-    p::BatchUnreducedKKTVector{T, MT, VT}
-    _w1::BatchUnreducedKKTVector{T, MT, VT}
+    d::BatchUnreducedKKTVector{T, MT}
+    p::BatchUnreducedKKTVector{T, MT}
+    _w1::BatchUnreducedKKTVector{T, MT}
 
     x::BatchPrimalVector{T, MT}
     xl::BatchPrimalVector{T, MT}
