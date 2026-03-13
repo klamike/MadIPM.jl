@@ -237,8 +237,8 @@ function initialize!(batch_solver::AbstractBatchMPCSolver{T}) where T
     MadNLP.eval_cons_wrapper!(batch_solver, ws.bx)
     MadNLP.eval_lag_hess_wrapper!(batch_solver, batch_solver.kkt)
 
-    ws.norm_b .= maximum(abs, MadNLP.full(batch_solver.rhs); dims=1)
-    ws.norm_c .= maximum(abs, MadNLP.full(batch_solver.f); dims=1)
+    batch_mapreduce!(abs, max, typemin(T), ws.norm_b, MadNLP.full(batch_solver.rhs))
+    batch_mapreduce!(abs, max, typemin(T), ws.norm_c, MadNLP.full(batch_solver.f))
 
     init_starting_point!(batch_solver)
 
@@ -361,17 +361,11 @@ function solve_system!(
     copyto!(MadNLP.full(w), MadNLP.full(p))
     mul!(w, batch_solver.kkt, d, -one(T), one(T))
 
-    bkkt = batch_solver.kkt
-    bs = bkkt.batch_size
-    @inbounds for i in 1:bs
-        if bkkt.batch_map[i] == 0
-            view(MadNLP.full(w), :, i) .= zero(T)
-            view(MadNLP.full(p), :, i) .= zero(T)
-        end
-    end
+    ws = batch_solver.workspace
+    MadNLP.full(w) .*= ws.active_mask
+    MadNLP.full(p) .*= ws.active_mask
 
     opt = batch_solver.opt
-    ws = batch_solver.workspace
     check_res = opt.check_residual
     tol_ls = T(opt.tol_linear_solve)
     _fw = MadNLP.full(w)
@@ -504,7 +498,11 @@ end
 function _update_active_mask!(batch_solver::AbstractBatchMPCSolver{T}) where T
     ws = batch_solver.workspace
     bmap = batch_solver.kkt.batch_map
-    copyto!(ws.active_mask, reshape(T.(bmap .!= 0), 1, :))
+    buf = ws.active_mask_cpu
+    @inbounds for i in eachindex(bmap)
+        buf[i] = T(bmap[i] != 0)
+    end
+    copyto!(ws.active_mask, reshape(buf, 1, :))
 end
 
 function mpc!(batch_solver::AbstractBatchMPCSolver)
