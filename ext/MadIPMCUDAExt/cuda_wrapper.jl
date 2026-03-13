@@ -192,15 +192,9 @@ function MadIPM._coo_to_scatter(
     proto_I, nzVals::CuMatrix{T}, batch_size::Int,
 ) where T
     if n_entries == 0
-        scatter = CUSPARSE.CuSparseMatrixCSC(
-            CuVector{Int32}([1]),
-            CuVector{Int32}(undef, 0),
-            CuVector{T}(undef, 0),
-            (nrows, 0),
-        )
-        op = MadIPMOperator(scatter; spmm_ncols=batch_size)
-        buffer = similar(nzVals, 0, batch_size)
-        return op, buffer
+        rowptr = CUDA.ones(Int, nrows + 1)
+        colidx = CuVector{Int}(undef, 0)
+        return rowptr, colidx
     end
     coo_J = similar(proto_I, n_entries)
     coo_J .= Int32(1):Int32(n_entries)
@@ -209,11 +203,23 @@ function MadIPM._coo_to_scatter(
     scatter, _ = MadNLP.coo_to_csc(
         MadNLP.SparseMatrixCOO(nrows, n_entries, coo_I, coo_J, coo_V),
     )
-    fill!(MadIPM._nzval(scatter), one(T))
-    op = MadIPMOperator(scatter; spmm_ncols=batch_size)
-    buffer = similar(nzVals, n_entries, batch_size)
-    fill!(buffer, zero(T))
-    return op, buffer
+    # Build CSR on host. Only used when first creating KKT system
+    rowval_h = Int.(Array(MadIPM._rowval(scatter)))
+    counts = zeros(Int, nrows)
+    for r in rowval_h; counts[r] += 1; end
+    rowptr_h = Vector{Int}(undef, nrows + 1)
+    rowptr_h[1] = 1
+    for r in 1:nrows; rowptr_h[r+1] = rowptr_h[r] + counts[r]; end
+    colidx_h = Vector{Int}(undef, n_entries)
+    pos = copy(rowptr_h[1:end-1])
+    for k in 1:n_entries
+        r = rowval_h[k]
+        colidx_h[pos[r]] = k
+        pos[r] += 1
+    end
+    rowptr = CuVector{Int}(rowptr_h)
+    colidx = CuVector{Int}(colidx_h)
+    return rowptr, colidx
 end
 
 # we introduce a new constructor that takes the nzvals as a matrix explicitly
