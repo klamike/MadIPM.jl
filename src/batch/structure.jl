@@ -34,6 +34,7 @@ struct UniformBatchWorkspace{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, MI
     _ls_error::MI
 
     active_mask::MT
+    active_mask_cpu::Vector{T}
 
     scratch::MT
 
@@ -73,6 +74,7 @@ function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, n::Int, m::Int, nlb::Int,
         MT(undef, 1, batch_size),  # _norm_gpu_p
         fill!(similar(_proto, Int32), zero(Int32)),  # _ls_error
         fill!(MT(undef, 1, batch_size), one(T)),  # active_mask
+        ones(T, batch_size),                      # active_mask_cpu
         MT(undef, max(n, m, nlb, nub, 1), batch_size),  # scratch
         MT(undef, nvar_nlp, batch_size),   # bx
         VT(undef, batch_size),  # bf
