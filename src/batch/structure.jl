@@ -29,6 +29,8 @@ struct UniformBatchWorkspace{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, MI
 
     _term_gpu::MI64
     _term_cpu::Vector{Int64}
+    _any_nonregular_gpu::MI64
+    _any_nonregular_cpu::Vector{Int64}
     _norm_gpu_w::MT
     _norm_gpu_p::MT
     _ls_error::MI
@@ -70,6 +72,8 @@ function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, n::Int, m::Int, nlb::Int,
         fill(MadNLP.INITIAL, batch_size),  # status
         similar(_proto, Int64),    # _term_gpu
         zeros(Int64, batch_size),  # _term_cpu
+        fill!(similar(_proto, Int64, 1, 1), Int64(Int(MadNLP.REGULAR))),  # _any_nonregular_gpu
+        zeros(Int64, 1),           # _any_nonregular_cpu
         MT(undef, 1, batch_size),  # _norm_gpu_w
         MT(undef, 1, batch_size),  # _norm_gpu_p
         fill!(similar(_proto, Int32), zero(Int32)),  # _ls_error
