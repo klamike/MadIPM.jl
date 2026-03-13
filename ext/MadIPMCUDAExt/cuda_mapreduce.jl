@@ -21,7 +21,7 @@ Base.@propagate_inbounds _src_getindex(srcs::Tuple, i, j) =
 Base.@propagate_inbounds _src_getindex(srcs::Tuple{Any}, i, j) = (srcs[1][i, j],)
 Base.@propagate_inbounds _src_getindex(srcs::Tuple{}, i, j)    = ()
 
-function _batch_mapreduce_kernel(f::F, op::OP, neutral::T, out, srcs::NTuple{N}) where {F, OP, T, N}
+_batch_mapreduce_kernel(f::F, op::OP, neutral::T, out, srcs::NTuple{N}) where {F, OP, T, N} = begin
     bs    = size(out, 2)
     nrows = size(first(srcs), 1)
     blockIdx_reduce, j = fldmod1(blockIdx().x, bs)
