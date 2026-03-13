@@ -16,6 +16,7 @@ import MadNLP
 
 include("operators.jl")
 include("cuda_wrapper.jl")
+include("cuda_mapreduce.jl")
 include("cuda_batch_kernels.jl")
 include("cuda_batch_nlp.jl")
 

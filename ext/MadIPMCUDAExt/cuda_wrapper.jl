@@ -1,6 +1,9 @@
 using MadNLPGPU
 import LinearAlgebra: BlasFloat
 
+MadIPM._scratch_view(scratch::CuMatrix{T}, k, bs) where T =
+    CUDA.unsafe_wrap(CuArray{T, 2}, pointer(scratch), (k, bs))
+
 @kernel function _transfer_to_map!(dest, to_map, src)
     k = @index(Global, Linear)
     @inbounds begin
@@ -21,7 +24,6 @@ function MadNLP._transfer!(dest::CuVector{T}, src::CuVector{T}, map::CuVector{In
     if length(map) > 0
         backend = CUDABackend()
         _transfer_to_map!(backend)(dest, map, src; ndrange=length(map))
-        KernelAbstractions.synchronize(backend)
     end
     return
 end
@@ -102,7 +104,6 @@ function MadIPM.assemble_normal_system!(
     backend = CUDABackend()
     kernel! = assemble_normal_system_kernel!(backend)
     kernel!(n_rows, n_cols, Jtp, Jtj, Jtx, Cp, Cj, Cx, Dx, Tv; ndrange = n_rows)
-    KernelAbstractions.synchronize(backend)
 end
 
 @kernel function count_normal_nnz!(Cp, @Const(Jtp), @Const(Jtj), @Const(n_rows), @Const(n_cols))
@@ -171,7 +172,6 @@ function MadIPM.build_normal_system(
     Cp = CUDA.ones(Ti, n_rows + 1)
     kernel1! = count_normal_nnz!(backend)
     kernel1!(Cp, Jtp, Jtj, n_rows, n_cols; ndrange = n_rows)
-    KernelAbstractions.synchronize(backend)
 
     Cp = cumsum(Cp)
     nnz_JtJ = CUDA.@allowscalar (Cp[end] - 1)
@@ -179,7 +179,6 @@ function MadIPM.build_normal_system(
 
     kernel2! = fill_normal_indices!(backend)
     kernel2!(Cj, Cp, Jtp, Jtj, n_rows, n_cols; ndrange = n_rows)
-    KernelAbstractions.synchronize(backend)
     return (Cp, Cj)
 end
 

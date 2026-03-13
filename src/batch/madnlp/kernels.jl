@@ -1,12 +1,12 @@
 function get_inf_pr!(inf_pr, c, scratch)
     @. scratch = abs(c)
-    maximum!(inf_pr, scratch)
+    batch_maximum!(inf_pr, scratch)
     return inf_pr
 end
 
 function get_inf_du!(inf_du, f_vals, zl_vals, zu_vals, jacl_vals, scratch)
     @. scratch = abs(f_vals - zl_vals + zu_vals + jacl_vals)
-    maximum!(inf_du, scratch)
+    batch_maximum!(inf_du, scratch)
     return inf_du
 end
 
@@ -16,14 +16,14 @@ function get_inf_compl!(inf_compl, x, xl, zl, xu, zu,
     if nlb > 0
         x_lr = lower(x); xl_r = lower(xl); zl_r = lower(zl)
         @. scratch_lb = abs(x_lr - xl_r) * zl_r
-        maximum!(sum_lb, scratch_lb)
+        batch_maximum!(sum_lb, scratch_lb)
     else
         fill!(sum_lb, zero(T))
     end
     if nub > 0
         xu_r = upper(xu); x_ur = upper(x); zu_r = upper(zu)
         @. scratch_ub = abs(xu_r - x_ur) * zu_r
-        maximum!(sum_ub, scratch_ub)
+        batch_maximum!(sum_ub, scratch_ub)
     else
         fill!(sum_ub, zero(T))
     end

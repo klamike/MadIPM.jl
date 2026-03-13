@@ -4,12 +4,18 @@ function NLPModels.obj!(
     bqp::ObjRHSBatchQuadraticModel{T, S, M1, M2, MT},
     bx::AbstractMatrix{T}, bf::AbstractVector{T},
 ) where {T, S, M1 <: MadIPMOperator, M2, MT}
+    bs = length(bf)
+    bf_mat = reshape(bf, 1, bs)
     if !bqp.meta.islp
         mul!(bqp._HX, bqp.data.H, bx)
-        bf .= bqp.data.c0 .+ vec(sum(bqp.c_batch .* bx, dims=1)) .+ T(0.5) .* vec(sum(bx .* bqp._HX, dims=1))
+        # _HX ← c_batch + 0.5*H*bx, then bf[j] = dot(_HX[:,j], bx[:,j]) + c0
+        bqp._HX .*= T(0.5)
+        bqp._HX .+= bqp.c_batch
+        MadIPM.batch_mapreduce!(*, +, zero(T), bf_mat, bqp._HX, bx)
     else
-        bf .= bqp.data.c0 .+ vec(sum(bqp.c_batch .* bx, dims=1))
+        MadIPM.batch_mapreduce!(*, +, zero(T), bf_mat, bqp.c_batch, bx)
     end
+    bf .+= bqp.data.c0
     return bf
 end
 
