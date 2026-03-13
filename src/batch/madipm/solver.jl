@@ -292,7 +292,7 @@ function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
             ),
         ),
     )
-    maximum!(ws._any_nonregular_gpu, ws._term_gpu)
+    minimum!(ws._any_nonregular_gpu, ws._term_gpu)
 end
 
 function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) where T
