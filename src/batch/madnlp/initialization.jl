@@ -26,8 +26,8 @@ function MadNLP.initialize!(
     lvar .= MadNLP.get_lvar(bcb)
     uvar .= MadNLP.get_uvar(bcb)
     y .= MadNLP.get_y0(bcb)
-    lcon = copy(MadNLP.get_lcon(bcb))
-    ucon = copy(MadNLP.get_ucon(bcb))
+    lcon = copy(MadNLP.get_lcon(bcb))  # FIXME: alloc
+    ucon = copy(MadNLP.get_ucon(bcb))  # FIXME: alloc
 
     MadNLP._treat_equality_initialize!(bcb.equality_handler, lcon, ucon, tol)
     MadNLP._treat_fixed_variable_initialize!(bcb, x0, lvar, uvar)  # this is no-op, recall bcb <: MadNLP.AbstractCallback. will need to be adjust for batchdensecallback

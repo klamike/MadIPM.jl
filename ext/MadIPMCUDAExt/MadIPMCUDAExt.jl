@@ -14,6 +14,7 @@ import LinearAlgebra: BlasFloat
 import MadIPM
 import MadNLP
 
+include("cuda_overhead.jl")
 include("operators.jl")
 include("cuda_wrapper.jl")
 include("cuda_mapreduce.jl")
