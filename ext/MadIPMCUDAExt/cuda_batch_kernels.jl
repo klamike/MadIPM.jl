@@ -147,7 +147,7 @@ end
     out, @Const(A), @Const(nz_map), @Const(B), @Const(val_map),
     @Const(rowptr), @Const(colidx),
 )
-    r, j = @index(Global, NTuple)
+    j, r = @index(Global, NTuple)
     val = zero(eltype(out))
     @inbounds for k in rowptr[r]:rowptr[r+1]-1
         i = colidx[k]
@@ -165,7 +165,7 @@ function MadIPM._gather_scatter!(
     if nout > 0
         backend = CUDABackend()
         _gather_scatter_kernel!(backend)(out, A, nz_map, B, val_map, rowptr, colidx;
-                                         ndrange=(nout, bs))
+                                         ndrange=(bs, nout), workgroupsize=(32, 4))
     end
     return out
 end
