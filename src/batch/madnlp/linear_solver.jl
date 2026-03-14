@@ -45,10 +45,11 @@ function _active_factorize!(s::LoopedBatchLinearSolver, na::Int)
     return
 end
 
-function _active_solve!(s::LoopedBatchLinearSolver, rhs::AbstractVector, na::Int, n::Int)
+function _active_solve!(s::LoopedBatchLinearSolver{T}, rhs::AbstractMatrix{T}, na::Int, n::Int) where {T}
+    VT = typeof(similar(rhs, T, 0))
     for j in 1:na
-        xj = MadNLP._madnlp_unsafe_wrap(rhs, n, (j-1)*n + 1)
-        MadNLP.solve_linear_system!(s.solvers[j], xj)
+        rhs_j = _madnlp_unsafe_column_wrap(rhs, n, (j-1)*n + 1, VT)
+        MadNLP.solve_linear_system!(s.solvers[j], rhs_j)
     end
     return
 end
