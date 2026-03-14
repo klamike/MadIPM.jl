@@ -4,6 +4,7 @@ version = "0.2.0"
 authors = ["François Pacaud <francoispacaud8@gmail.com>", "Alexis Montoison <amontoison@anl.gov>"]
 
 [deps]
+CUDAGraphs = "c66d65b5-1435-428e-a98f-c21a2a531f64"
 LDLFactorizations = "40e66cde-538c-5869-a4ad-c39174c6795b"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MadNLP = "2621e9c9-9eb4-46b1-8089-e8c72242dfb6"
@@ -21,6 +22,7 @@ MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
 MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 
 [sources]
+CUDAGraphs = {path = "../CUDAGraphs.jl"}
 NLPModels = {rev = "mk/paramnlp", url = "https://github.com/klamike/NLPModels.jl"}
 QuadraticModels = {url = "https://github.com/klamike/QuadraticModels.jl.git", rev = "mk/rhsbatch"}
 
@@ -31,6 +33,7 @@ MadIPMMathOptInterfaceExt = "MathOptInterface"
 [compat]
 Atomix = "1"
 CUDA = "5.4.0"
+CUDAGraphs = "0.1"
 CUDSS = "0.6"
 KernelAbstractions = "0.9"
 LDLFactorizations = "0.10.1"
@@ -49,6 +52,7 @@ julia = "1.10"
 [extras]
 Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CUDAGraphs = "c66d65b5-1435-428e-a98f-c21a2a531f64"
 CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
@@ -57,4 +61,4 @@ MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Atomix", "CUDA", "CUDSS", "KernelAbstractions", "MadNLPTests", "MadNLPGPU", "MathOptInterface", "Test"]
+test = ["Atomix", "CUDA", "CUDAGraphs", "CUDSS", "KernelAbstractions", "MadNLPTests", "MadNLPGPU", "MathOptInterface", "Test"]

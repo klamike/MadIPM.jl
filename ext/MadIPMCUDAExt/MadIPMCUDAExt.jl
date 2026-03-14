@@ -8,6 +8,7 @@ using CUDA
 using CUDA.CUSPARSE
 using CUDSS
 using KernelAbstractions
+using CUDAGraphs
 import Atomix
 import QuadraticModels: SparseMatrixCOO
 import LinearAlgebra: BlasFloat

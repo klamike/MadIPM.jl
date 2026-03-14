@@ -304,185 +304,39 @@ end
 
 MadIPM.is_factorized(::MadNLPGPU.CUDSSSolver) = true
 
-#=
-    Segmented CUDA graph capture.
+# --- CUDSS dispatch: annotated as graph breaks via CUDAGraphs.@graphbreak ---
 
-    mpc_step! has 3 CUDSS calls that cannot be captured in CUDA graphs when
-    ubatch_size > 1. We split mpc_step! into 4 graph segments around these calls.
-
-    During capture: each CUDSS dispatch ends the current segment capture, runs
-    CUDSS eagerly (on stale data — harmless), and starts the next segment capture.
-
-    During replay: segments are launched on the stream with CUDSS calls enqueued
-    between them. Stream ordering guarantees correctness without explicit syncs.
-=#
-
-# --- Low-level graph helpers (raw handles) ---
-
-function _begin_segment_capture(stream::CUDA.CuStream)
-    CUDA.cuStreamBeginCapture_v2(stream, CUDA.CU_STREAM_CAPTURE_MODE_THREAD_LOCAL)
-end
-
-function _end_segment_capture(stream::CUDA.CuStream)
-    graph_ref = Ref{CUDA.CUgraph}()
-    err = CUDA.unchecked_cuStreamEndCapture(stream, graph_ref)
-    err != CUDA.CUDA_SUCCESS && throw(CUDA.CuError(err))
-    return graph_ref[]
-end
-
-function _instantiate_raw(graph::CUDA.CUgraph)
-    exec_ref = Ref{CUDA.CUgraphExec}()
-    CUDA.cuGraphInstantiateWithFlags(exec_ref, graph, UInt64(0))
-    return exec_ref[]
-end
-
-function _launch_raw(exec::CUDA.CUgraphExec, stream::CUDA.CuStream)
-    CUDA.cuGraphLaunch(exec, stream)
-end
-
-# --- Segment boundary helpers ---
-
-function _segment_break_capture!(cudss_work)
-    stream = CUDA.stream()
-    cache = _SEG_CACHE[]
-
-    # End current segment capture
-    _CAPTURING[] = false
-    graph = _end_segment_capture(stream)
-    exec = _instantiate_raw(graph)
-    push!(cache.graphs, graph)
-    push!(cache.execs, exec)
-    push!(cache.cudss_calls, cudss_work)
-
-    # Run CUDSS eagerly (data may be stale during capture — that's OK)
-    cudss_work()
-
-    # Start next segment capture
-    _CURRENT_SEGMENT[] += 1
-    _CAPTURING[] = true
-    _begin_segment_capture(stream)
-end
-
-function _segment_break_replay!(cudss_work)
-    cache = _SEG_CACHE[]
-    seg = _CURRENT_SEGMENT[]
-    _launch_raw(cache.execs[seg], CUDA.stream())
-    cudss_work()  # stream-ordered after graph launch, no sync needed
-    _CURRENT_SEGMENT[] += 1
-end
-
-# --- CUDSS dispatch with segment break support ---
-
-MadIPM.@sync_annotate function MadIPM._active_factorize!(s::MadNLPGPU.CUDSSSolver, na::Int)
-    cudss_work = () -> begin
-        CUDSS.cudss_set(s.inner, "ubatch_size", na)
-        MadNLP.factorize!(s)
-    end
-    mode = _SEGMENTED_MODE[]
-    if mode === :capturing
-        _segment_break_capture!(cudss_work)
-    elseif mode === :replaying
-        _segment_break_replay!(cudss_work)
-    else
-        cudss_work()
-    end
+CUDAGraphs.@graphbreak MadIPM.@sync_annotate function MadIPM._active_factorize!(s::MadNLPGPU.CUDSSSolver, na::Int)
+    CUDSS.cudss_set(s.inner, "ubatch_size", na)
+    MadNLP.factorize!(s)
     return
 end
 
-MadIPM.@sync_annotate function MadIPM._active_solve!(s::MadNLPGPU.CUDSSSolver{T}, rhs::CuMatrix{T}, na::Int, n::Int) where T
-    cudss_work = () -> begin
-        CUDSS.cudss_set(s.inner, "ubatch_size", na)
-        CUDSS.cudss_update(s.b_gpu, rhs)
-        CUDSS.cudss_update(s.x_gpu, rhs)
-        CUDSS.cudss("solve", s.inner, s.x_gpu, s.b_gpu, asynchronous=s.opt.cudss_asynchronous)
-    end
-    mode = _SEGMENTED_MODE[]
-    if mode === :capturing
-        _segment_break_capture!(cudss_work)
-    elseif mode === :replaying
-        _segment_break_replay!(cudss_work)
-    else
-        cudss_work()
-    end
+CUDAGraphs.@graphbreak MadIPM.@sync_annotate function MadIPM._active_solve!(s::MadNLPGPU.CUDSSSolver{T}, rhs::CuMatrix{T}, na::Int, n::Int) where T
+    CUDSS.cudss_set(s.inner, "ubatch_size", na)
+    CUDSS.cudss_update(s.b_gpu, rhs)
+    CUDSS.cudss_update(s.x_gpu, rhs)
+    CUDSS.cudss("solve", s.inner, s.x_gpu, s.b_gpu, asynchronous=s.opt.cudss_asynchronous)
     return
 end
 
-# --- Segmented capture and replay ---
-
-function _capture_all!(cache::SegmentedGraphCache, batch_solver, na::Int)
-    stream = CUDA.stream()
-    gc_state = GC.enable(false)  # no GC during any capture segment
-    _CURRENT_SEGMENT[] = 1
-    _SEGMENTED_MODE[] = :capturing
-    _CAPTURING[] = true
-    ok = true
-    try
-        _begin_segment_capture(stream)
-        MadIPM._captured_work!(batch_solver)
-        # mpc_step! triggered 3 CUDSS breaks → segments 1-3 captured, now on segment 4
-        # End the final segment
-        _CAPTURING[] = false
-        graph = _end_segment_capture(stream)
-        exec = _instantiate_raw(graph)
-        push!(cache.graphs, graph)
-        push!(cache.execs, exec)
-        cache.n_segments = _CURRENT_SEGMENT[]
-        cache.na = na
-        cache.valid = true
-    catch e
-        ok = false
-        _CAPTURING[] = false
-        @warn "Segmented graph capture failed" exception=(e, catch_backtrace())
-        # Try to clean up any in-progress capture to avoid stream corruption
-        try
-            _end_segment_capture(stream)
-        catch
-        end
-        _invalidate_seg_cache!()
-    finally
-        _SEGMENTED_MODE[] = :off
-        _CAPTURING[] = false
-        GC.enable(gc_state)
-    end
-
-    if ok
-        # Replay to get correct first-iteration results
-        # (capture-time kernel work was recorded but not executed)
-        _replay_all!(cache)
-    else
-        # Capture failed (e.g. JIT on first call) — run ungraphed, retry next iteration
-        MadIPM._captured_work!(batch_solver)
-    end
-end
-
-function _replay_all!(cache::SegmentedGraphCache)
-    stream = CUDA.stream()
-    n = cache.n_segments
-    for seg in 1:n
-        _launch_raw(cache.execs[seg], stream)
-        if seg < n
-            cache.cudss_calls[seg]()  # stream-ordered after graph
-        end
-    end
-end
+# --- Segmented graph capture via CUDAGraphs.@unsafe_scaptured ---
 
 MadIPM.@sync_annotate function MadIPM._captured_step!(
     batch_solver::MadIPM.UniformBatchMPCSolver{T, <:CuMatrix{T}},
 ) where T
-    # Segmented capture: CUDSS calls run outside of graph capture,
-    # so no mempool requirement (_GRAPH_CAPTURE_OK not checked).
     na = batch_solver.kkt.active_batch_size[]
     cache = _SEG_CACHE[]
 
-    # Replay if cache is valid for current active batch size
-    if cache.valid && cache.na == na
-        _replay_all!(cache)
-        return
+    # Invalidate when active batch size changes (na is a frozen scalar in closures)
+    if _SEG_CACHE_NA[] != na
+        CUDAGraphs.invalidate!(cache)
+        _SEG_CACHE_NA[] = na
     end
 
-    # (Re-)capture: na changed or first call
-    _invalidate_seg_cache!()
-    _capture_all!(cache, batch_solver, na)
+    CUDAGraphs.@unsafe_scaptured cache begin
+        MadIPM._captured_work!(batch_solver)
+    end
 end
 
 function MadNLPGPU.CUDSSSolver(

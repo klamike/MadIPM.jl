@@ -11,57 +11,17 @@ const _CAPTURING = Ref{Bool}(false)
 # Whether CUDSS mempool is set (required for graph capture)
 const _GRAPH_CAPTURE_OK = Ref{Bool}(false)
 
-#=
-    Segmented graph cache for batch CUDA graph capture.
-
-    When CUDSS batch mode (ubatch_size > 1) is not graphable, mpc_step! is split
-    into multiple graph segments around the 3 CUDSS calls (1 factorize + 2 solves).
-    Each segment is captured as an independent CUDA graph. During replay, segments
-    are launched sequentially with CUDSS calls (stream-ordered) in between.
-=#
-mutable struct SegmentedGraphCache
-    execs::Vector{CUDA.CUgraphExec}    # raw exec handles (one per segment)
-    graphs::Vector{CUDA.CUgraph}       # raw graph handles (for cleanup)
-    cudss_calls::Vector{Any}           # CUDSS work closures between segments
-    n_segments::Int                     # number of captured segments (expect 4)
-    na::Int                             # active batch size when captured
-    valid::Bool
-end
-
-function SegmentedGraphCache()
-    SegmentedGraphCache(
-        CUDA.CUgraphExec[], CUDA.CUgraph[], Any[], 0, -1, false,
-    )
-end
-
-const _SEG_CACHE = Ref{SegmentedGraphCache}()
-
-# Segment tracking during capture/replay
-const _CURRENT_SEGMENT = Ref{Int}(0)
-const _SEGMENTED_MODE = Ref{Symbol}(:off)  # :off, :capturing, :replaying
-
-function _invalidate_seg_cache!()
-    isassigned(_SEG_CACHE) || return
-    cache = _SEG_CACHE[]
-    for exec in cache.execs
-        CUDA.cuGraphExecDestroy(exec)
-    end
-    for graph in cache.graphs
-        CUDA.cuGraphDestroy(graph)
-    end
-    empty!(cache.execs)
-    empty!(cache.graphs)
-    empty!(cache.cudss_calls)
-    cache.n_segments = 0
-    cache.na = -1
-    cache.valid = false
-    return
-end
+# Graph cache for segmented CUDA graph capture (via CUDAGraphs.jl)
+const _SEG_CACHE = Ref{CUDAGraphs.SegmentedGraphCache}()
+const _SEG_CACHE_NA = Ref{Int}(-1)  # active batch size when captured
 
 function MadIPM.solve!(batch_solver::MadIPM.UniformBatchMPCSolver{T, <:CuMatrix{T}}) where T
     _SOLVING[] = true
     # Invalidate graph cache at start of each solve (buffers may have moved)
-    _invalidate_seg_cache!()
+    if isassigned(_SEG_CACHE)
+        CUDAGraphs.invalidate!(_SEG_CACHE[])
+        _SEG_CACHE_NA[] = -1
+    end
     try
         invoke(MadIPM.solve!, Tuple{MadIPM.AbstractBatchMPCSolver{T}}, batch_solver)
     finally
@@ -70,7 +30,8 @@ function MadIPM.solve!(batch_solver::MadIPM.UniformBatchMPCSolver{T, <:CuMatrix{
 end
 
 function _init_overhead!()
-    _SEG_CACHE[] = SegmentedGraphCache()
+    _SEG_CACHE[] = CUDAGraphs.SegmentedGraphCache()
+    _SEG_CACHE_NA[] = -1
 
     @eval begin
         # CUDA.jl/lib/cudadrv/graph.jl:162
