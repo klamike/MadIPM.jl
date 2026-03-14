@@ -21,6 +21,11 @@ include("cuda_mapreduce.jl")
 include("cuda_batch_kernels.jl")
 include("cuda_batch_nlp.jl")
 
+function __init__()
+    _init_overhead!()
+    _init_cudss_mempool_fptrs!()
+end
+
 function MadIPM._csc_with_nzval(A::CUSPARSE.CuSparseMatrixCSC, nzval, n)
     return CUSPARSE.CuSparseMatrixCSC(A.colPtr, A.rowVal, nzval, (n, n))
 end

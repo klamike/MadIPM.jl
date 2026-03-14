@@ -376,18 +376,18 @@ function update_step!(rule::MehrotraAdaptiveStep, batch_solver::AbstractBatchMPC
     return
 end
 
-# FIXME: make it a kernel
+# Fused broadcast — no temporaries allocated.
 function _adjust_boundary_active!(x_lr::AbstractMatrix{T}, xl_r, x_ur, xu_r, mu, mask) where {T}
-    c2 = eps(T)^(T(3)/T(4))
-    c1 = eps(T) .* mu  # (1 × bs)
+    _c2 = eps(T)^(T(3)/T(4))
+    _eps = eps(T)
     xl_r .= ifelse.(
-        (mask .!= 0) .& (x_lr .- xl_r .< c1),
-        xl_r .- c2 .* max.(one(T), abs.(x_lr)),
+        (mask .!= 0) .& (x_lr .- xl_r .< _eps .* mu),
+        xl_r .- _c2 .* max.(one(T), abs.(x_lr)),
         xl_r,
     )
     xu_r .= ifelse.(
-        (mask .!= 0) .& (xu_r .- x_ur .< c1),
-        xu_r .+ c2 .* max.(one(T), abs.(x_ur)),
+        (mask .!= 0) .& (xu_r .- x_ur .< _eps .* mu),
+        xu_r .+ _c2 .* max.(one(T), abs.(x_ur)),
         xu_r,
     )
 end

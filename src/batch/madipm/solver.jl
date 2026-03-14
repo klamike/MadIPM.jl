@@ -523,17 +523,24 @@ function _update_active_mask!(batch_solver::AbstractBatchMPCSolver{T}) where T
     copyto!(ws.active_mask, reshape(buf, 1, :))
 end
 
+function _captured_work!(batch_solver::AbstractBatchMPCSolver)
+    mpc_step!(batch_solver)
+    update_termination_criteria!(batch_solver)
+end
+_captured_step!(batch_solver::AbstractBatchMPCSolver) = _captured_work!(batch_solver)
+
 function mpc!(batch_solver::AbstractBatchMPCSolver)
+    # Compute initial termination criteria (before first print/check)
+    update_termination_criteria!(batch_solver)
     while true
         MadNLP.print_iter(batch_solver)
-        update_termination_criteria!(batch_solver)
         changed = update_termination_status!(batch_solver)
         if changed
             update_active_set!(batch_solver.kkt, batch_solver.workspace.status)
             batch_solver.kkt.active_batch_size[] == 0 && return
             _update_active_mask!(batch_solver)
         end
-        mpc_step!(batch_solver)
+        _captured_step!(batch_solver)
     end
 end
 

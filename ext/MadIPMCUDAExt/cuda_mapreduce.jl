@@ -44,7 +44,12 @@ _batch_mapreduce_kernel(f::F, op::OP, neutral::T, out, srcs::NTuple{N}) where {F
     return
 end
 
-function MadIPM.batch_mapreduce!(f, op, neutral::T, out::CuMatrix{T}, srcs::CuMatrix{T}...) where T
+# Accept any GPU-backed 2D array (CuMatrix, SubArray of CuMatrix, etc.)
+# so that fancy-indexed views (e.g. lower(solver.x)) dispatch here
+# instead of falling through to the generic allocating mapreduce.
+const _AnyCuMat{T} = Union{CuMatrix{T}, SubArray{T, 2, <:CuArray}}
+
+function MadIPM.batch_mapreduce!(f, op, neutral::T, out::CuMatrix{T}, srcs::_AnyCuMat{T}...) where T
     nrows = size(first(srcs), 1)
     nrows == 0 && return
     fill!(out, neutral)
@@ -56,9 +61,9 @@ function MadIPM.batch_mapreduce!(f, op, neutral::T, out::CuMatrix{T}, srcs::CuMa
     return
 end
 
-MadIPM.batch_maximum!(out::CuMatrix{T}, src::CuMatrix{T}) where T =
+MadIPM.batch_maximum!(out::CuMatrix{T}, src::_AnyCuMat{T}) where T =
     MadIPM.batch_mapreduce!(identity, max, typemin(T), out, src)
-MadIPM.batch_minimum!(out::CuMatrix{T}, src::CuMatrix{T}) where T =
+MadIPM.batch_minimum!(out::CuMatrix{T}, src::_AnyCuMat{T}) where T =
     MadIPM.batch_mapreduce!(identity, min, typemax(T), out, src)
-MadIPM.batch_sum!(out::CuMatrix{T}, src::CuMatrix{T}) where T =
+MadIPM.batch_sum!(out::CuMatrix{T}, src::_AnyCuMat{T}) where T =
     MadIPM.batch_mapreduce!(identity, +, zero(T), out, src)
