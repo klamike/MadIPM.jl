@@ -229,6 +229,30 @@ function _finish_aug_solve_batch!(values::AbstractMatrix, ind_lb, lb_off, l_lowe
     end
 end
 
+function _adjoint_reduce_rhs_batch!(values::AbstractMatrix, ind_lb, lb_off, l_diag,
+                                                             ind_ub, ub_off, u_diag)
+    nlb = length(ind_lb); nub = length(ind_ub); bs = size(values, 2)
+    @inbounds for j in 1:bs, i in 1:nlb
+        values[lb_off + i, j] -= values[ind_lb[i], j] / l_diag[i, j]
+    end
+    @inbounds for j in 1:bs, i in 1:nub
+        values[ub_off + i, j] -= values[ind_ub[i], j] / u_diag[i, j]
+    end
+end
+
+function _adjoint_finish_bounds_batch!(values::AbstractMatrix, ind_lb, lb_off, l_lower, l_diag,
+                                                               ind_ub, ub_off, u_lower, u_diag)
+    nlb = length(ind_lb); nub = length(ind_ub); bs = size(values, 2)
+    @inbounds for j in 1:bs, i in 1:nlb
+        values[ind_lb[i], j] += (l_lower[i, j] / l_diag[i, j]) * values[lb_off + i, j]
+        values[lb_off + i, j] = -values[lb_off + i, j] / l_diag[i, j]
+    end
+    @inbounds for j in 1:bs, i in 1:nub
+        values[ind_ub[i], j] -= (u_lower[i, j] / u_diag[i, j]) * values[ub_off + i, j]
+        values[ub_off + i, j] = values[ub_off + i, j] / u_diag[i, j]
+    end
+end
+
 function MadNLP.reduce_rhs!(bkkt::SparseUniformBatchKKTSystem, d::BatchUnreducedKKTVector)
     lb_off = d.n + d.m
     _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag,
@@ -256,6 +280,13 @@ function MadNLP.solve_kkt!(bkkt::SparseUniformBatchKKTSystem, batch_solver::Abst
     copyto!(pd_view, rhs)
 
     MadNLP.finish_aug_solve!(bkkt, batch_solver)
+    return
+end
+
+function MadNLP.finish_aug_solve!(bkkt::SparseUniformBatchKKTSystem, d::BatchUnreducedKKTVector)
+    lb_off = d.n + d.m
+    _finish_aug_solve_batch!(d.values, d.ind_lb, lb_off, bkkt.l_lower, bkkt.l_diag,
+                                       d.ind_ub, lb_off + d.nlb, bkkt.u_lower, bkkt.u_diag)
     return
 end
 

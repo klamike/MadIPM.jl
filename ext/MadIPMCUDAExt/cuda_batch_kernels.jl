@@ -209,3 +209,49 @@ function MadIPM._finish_aug_solve_batch!(values::CuMatrix, ind_lb, lb_off, l_low
     nub > 0 && _finish_aug_solve_ub_kernel!(backend)(values, ind_ub, ub_off, u_lower, u_diag; ndrange=(nub, bs))
     return
 end
+
+@kernel function _adjoint_reduce_rhs_lb_kernel!(values, @Const(ind_lb), lb_off, @Const(l_diag))
+    i, j = @index(Global, NTuple)
+    @inbounds values[lb_off + i, j] -= values[ind_lb[i], j] / l_diag[i, j]
+end
+
+@kernel function _adjoint_reduce_rhs_ub_kernel!(values, @Const(ind_ub), ub_off, @Const(u_diag))
+    i, j = @index(Global, NTuple)
+    @inbounds values[ub_off + i, j] -= values[ind_ub[i], j] / u_diag[i, j]
+end
+
+function MadIPM._adjoint_reduce_rhs_batch!(values::CuMatrix, ind_lb, lb_off, l_diag,
+                                                              ind_ub, ub_off, u_diag)
+    bs = size(values, 2); backend = CUDABackend()
+    nlb = length(ind_lb)
+    nlb > 0 && _adjoint_reduce_rhs_lb_kernel!(backend)(values, ind_lb, lb_off, l_diag; ndrange=(nlb, bs))
+    nub = length(ind_ub)
+    nub > 0 && _adjoint_reduce_rhs_ub_kernel!(backend)(values, ind_ub, ub_off, u_diag; ndrange=(nub, bs))
+    return
+end
+
+@kernel function _adjoint_finish_bounds_lb_kernel!(values, @Const(ind_lb), lb_off, @Const(l_lower), @Const(l_diag))
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        values[ind_lb[i], j] += (l_lower[i, j] / l_diag[i, j]) * values[lb_off + i, j]
+        values[lb_off + i, j] = -values[lb_off + i, j] / l_diag[i, j]
+    end
+end
+
+@kernel function _adjoint_finish_bounds_ub_kernel!(values, @Const(ind_ub), ub_off, @Const(u_lower), @Const(u_diag))
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        values[ind_ub[i], j] -= (u_lower[i, j] / u_diag[i, j]) * values[ub_off + i, j]
+        values[ub_off + i, j] = values[ub_off + i, j] / u_diag[i, j]
+    end
+end
+
+function MadIPM._adjoint_finish_bounds_batch!(values::CuMatrix, ind_lb, lb_off, l_lower, l_diag,
+                                                                ind_ub, ub_off, u_lower, u_diag)
+    bs = size(values, 2); backend = CUDABackend()
+    nlb = length(ind_lb)
+    nlb > 0 && _adjoint_finish_bounds_lb_kernel!(backend)(values, ind_lb, lb_off, l_lower, l_diag; ndrange=(nlb, bs))
+    nub = length(ind_ub)
+    nub > 0 && _adjoint_finish_bounds_ub_kernel!(backend)(values, ind_ub, ub_off, u_lower, u_diag; ndrange=(nub, bs))
+    return
+end
