@@ -446,14 +446,16 @@ function mehrotra_correction_direction!(solver::AbstractBatchMPCSolver)
 end
 
 function factorize_system!(batch_solver::AbstractBatchMPCSolver)
+    ws = batch_solver.workspace
     update_regularization!(batch_solver, batch_solver.opt.regularization)
     max_trials = 3
     for _ in 1:max_trials
         set_aug_diagonal_reg!(batch_solver.kkt, batch_solver)
         MadNLP.factorize_wrapper!(batch_solver)
         is_factorized(batch_solver.kkt.batch_solver) && break  # exit once all are factorized
-        batch_solver.del_w .*= 100.0
-        batch_solver.del_c .*= 100.0
+        # FIXME: mask based on is_factorized instead of termination only
+        batch_solver.del_w .+= 100.0 .* ws.active_mask
+        batch_solver.del_c .+= 100.0 .* ws.active_mask
     end
     return
 end
@@ -480,7 +482,7 @@ function apply_step!(batch_solver::AbstractBatchMPCSolver)
         upper(zu) .+= ws.alpha_d .* MadNLP.dual_ub(d)
     end
 
-    MadNLP.adjust_boundary!(lower(x), lower(xl), upper(x), upper(xu), ws.mu_batch)
+    _adjust_boundary_active!(lower(x), lower(xl), upper(x), upper(xu), ws.mu_batch, ws.active_mask)
     increment_k!(batch_solver)
     return
 end

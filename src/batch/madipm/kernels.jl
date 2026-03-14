@@ -376,29 +376,50 @@ function update_step!(rule::MehrotraAdaptiveStep, batch_solver::AbstractBatchMPC
     return
 end
 
+# FIXME: make it a kernel
+function _adjust_boundary_active!(x_lr::AbstractMatrix{T}, xl_r, x_ur, xu_r, mu, mask) where {T}
+    c2 = eps(T)^(T(3)/T(4))
+    c1 = eps(T) .* mu  # (1 × bs)
+    xl_r .= ifelse.(
+        (mask .!= 0) .& (x_lr .- xl_r .< c1),
+        xl_r .- c2 .* max.(one(T), abs.(x_lr)),
+        xl_r,
+    )
+    xu_r .= ifelse.(
+        (mask .!= 0) .& (xu_r .- x_ur .< c1),
+        xu_r .+ c2 .* max.(one(T), abs.(x_ur)),
+        xu_r,
+    )
+end
+
 function init_regularization!(solver::AbstractBatchMPCSolver, ::NoRegularization)
     fill!(solver.del_w, 1.0)
     fill!(solver.del_c, 0.0)
 end
-function update_regularization!(solver::AbstractBatchMPCSolver, ::NoRegularization)
-    fill!(solver.del_w, 0.0)
-    fill!(solver.del_c, 0.0)
+update_regularization!(solver::AbstractBatchMPCSolver, reg) =
+    update_regularization!(solver, reg, solver.workspace.active_mask)
+# FIXME: make it a kernel
+function update_regularization!(solver::AbstractBatchMPCSolver, ::NoRegularization, mask)
+    solver.del_w .= ifelse.(mask .== 1, 0.0, solver.del_w)
+    solver.del_c .= ifelse.(mask .== 1, 0.0, solver.del_c)
 end
 function init_regularization!(solver::AbstractBatchMPCSolver, reg::FixedRegularization)
     fill!(solver.del_w, 1.0)
     fill!(solver.del_c, reg.delta_d)
 end
-function update_regularization!(solver::AbstractBatchMPCSolver, reg::FixedRegularization)
-    fill!(solver.del_w, reg.delta_p)
-    fill!(solver.del_c, reg.delta_d)
+# FIXME: make it a kernel
+function update_regularization!(solver::AbstractBatchMPCSolver, reg::FixedRegularization, mask)
+    solver.del_w .= ifelse.(mask .== 1, reg.delta_p, solver.del_w)
+    solver.del_c .= ifelse.(mask .== 1, reg.delta_d, solver.del_c)
 end
 function init_regularization!(solver::AbstractBatchMPCSolver, reg::AdaptiveRegularization)
     fill!(solver.del_w, 1.0)
     fill!(solver.del_c, reg.delta_d)
 end
-function update_regularization!(solver::AbstractBatchMPCSolver, reg::AdaptiveRegularization)
+# FIXME: make it a kernel
+function update_regularization!(solver::AbstractBatchMPCSolver, reg::AdaptiveRegularization, mask)
     reg.delta_p = max(reg.delta_p / 10.0, reg.delta_min)
     reg.delta_d = min(reg.delta_d / 10.0, -reg.delta_min)
-    fill!(solver.del_w, reg.delta_p)
-    fill!(solver.del_c, reg.delta_d)
+    solver.del_w .= ifelse.(mask .== 1, reg.delta_p, solver.del_w)
+    solver.del_c .= ifelse.(mask .== 1, reg.delta_d, solver.del_c)
 end
