@@ -11,7 +11,7 @@ MadIPM._scratch_view(scratch::CuMatrix{T}, k, bs) where T =
     end
 end
 
-MadIPM.@sync_annotate function MadNLP.transfer!(
+function MadNLP.transfer!(
     dest::CUSPARSE.CuSparseMatrixCSC{Tv},
     src::MadNLP.SparseMatrixCOO{Tv},
     map::CuVector{Int},
@@ -19,7 +19,7 @@ MadIPM.@sync_annotate function MadNLP.transfer!(
     return MadNLP._transfer!(dest.nzVal, src.V, map)
 end
 
-MadIPM.@sync_annotate function MadNLP._transfer!(dest::CuVector{T}, src::CuVector{T}, map::CuVector{Int}) where T
+function MadNLP._transfer!(dest::CuVector{T}, src::CuVector{T}, map::CuVector{Int}) where T
     fill!(dest, zero(T))
     if length(map) > 0
         backend = CUDABackend()
@@ -28,13 +28,13 @@ MadIPM.@sync_annotate function MadNLP._transfer!(dest::CuVector{T}, src::CuVecto
     return
 end
 
-MadIPM.@sync_annotate function MadNLP.compress_hessian!(
+function MadNLP.compress_hessian!(
     kkt::MadNLP.SparseKKTSystem{T,VT,MT},
 ) where {T,VT,MT<:CUSPARSE.CuSparseMatrixCSC{T,Int32}}
     MadNLP.transfer!(kkt.hess_com, kkt.hess_raw, kkt.hess_csc_map)
 end
 
-MadIPM.@sync_annotate function MadNLP.compress_jacobian!(
+function MadNLP.compress_jacobian!(
     kkt::MadIPM.NormalKKTSystem{T,VT,MT},
 ) where {T,VT,MT<:CUSPARSE.CuSparseMatrixCSC{T,Int32}}
     n_slack = length(kkt.ind_ineq)
@@ -45,7 +45,7 @@ MadIPM.@sync_annotate function MadNLP.compress_jacobian!(
     return
 end
 
-MadIPM.@sync_annotate function MadIPM.coo_to_csr(
+function MadIPM.coo_to_csr(
     n_rows,
     n_cols,
     Ai::CuVector{Ti},
@@ -90,7 +90,7 @@ end
     nothing
 end
 
-MadIPM.@sync_annotate function MadIPM.assemble_normal_system!(
+function MadIPM.assemble_normal_system!(
     n_rows,
     n_cols,
     Jtp::CuArray{Ti},
@@ -162,7 +162,7 @@ end
     nothing
 end
 
-MadIPM.@sync_annotate function MadIPM.build_normal_system(
+function MadIPM.build_normal_system(
     n_rows,
     n_cols,
     Jtp::CuVector{Ti},
@@ -187,7 +187,7 @@ MadIPM._colptr(A::CuSparseMatrixCSC) = A.colPtr
 MadIPM._rowval(A::CuSparseMatrixCSC) = A.rowVal
 MadIPM._nzval(A::CuSparseMatrixCSC) = A.nzVal
 
-MadIPM.@sync_annotate function MadIPM._coo_to_scatter(
+function MadIPM._coo_to_scatter(
     coo_I, nrows::Int, n_entries::Int,
     proto_I, nzVals::CuMatrix{T}, batch_size::Int,
 ) where T
@@ -257,7 +257,7 @@ end
 const _CUDSS_POOL_ALLOC_FPTR = Ref{Ptr{Cvoid}}(C_NULL)
 const _CUDSS_POOL_FREE_FPTR  = Ref{Ptr{Cvoid}}(C_NULL)
 
-MadIPM.@sync_annotate function _init_cudss_mempool_fptrs!()
+function _init_cudss_mempool_fptrs!()
     _CUDSS_POOL_ALLOC_FPTR[] = @cfunction(
         _cudss_pool_alloc, Cint, (Ptr{Cvoid}, Ptr{Ptr{Cvoid}}, Csize_t, CUDA.CUstream))
     _CUDSS_POOL_FREE_FPTR[] = @cfunction(
@@ -265,7 +265,7 @@ MadIPM.@sync_annotate function _init_cudss_mempool_fptrs!()
     return
 end
 
-MadIPM.@sync_annotate function _set_cudss_mempool!(handle::CUDSS.cudssHandle_t)
+function _set_cudss_mempool!(handle::CUDSS.cudssHandle_t)
     name = ntuple(64) do i
         s = "cuda_stream_pool"
         i <= ncodeunits(s) ? Cchar(codeunit(s, i)) : Cchar(0)
@@ -285,7 +285,7 @@ MadIPM.@sync_annotate function _set_cudss_mempool!(handle::CUDSS.cudssHandle_t)
 end
 
 # we introduce a new constructor that takes the nzvals as a matrix explicitly
-MadIPM.@sync_annotate function MadNLPGPU.CUDSSSolver(
+function MadNLPGPU.CUDSSSolver(
     aug_com::CUSPARSE.CuSparseMatrixCSC{T,Cint},
     nzvals_mat::CuMatrix{T},
     n::Int;
@@ -306,13 +306,13 @@ MadIPM.is_factorized(::MadNLPGPU.CUDSSSolver) = true
 
 # --- CUDSS dispatch: annotated as graph breaks via CUDAGraphs.@graphbreak ---
 
-CUDAGraphs.@graphbreak MadIPM.@sync_annotate function MadIPM._active_factorize!(s::MadNLPGPU.CUDSSSolver, na::Int)
+function MadIPM._active_factorize!(s::MadNLPGPU.CUDSSSolver, na::Int)
     CUDSS.cudss_set(s.inner, "ubatch_size", na)
     MadNLP.factorize!(s)
     return
 end
 
-CUDAGraphs.@graphbreak MadIPM.@sync_annotate function MadIPM._active_solve!(s::MadNLPGPU.CUDSSSolver{T}, rhs::CuMatrix{T}, na::Int, n::Int) where T
+function MadIPM._active_solve!(s::MadNLPGPU.CUDSSSolver{T}, rhs::CuMatrix{T}, na::Int, n::Int) where T
     CUDSS.cudss_set(s.inner, "ubatch_size", na)
     CUDSS.cudss_update(s.b_gpu, rhs)
     CUDSS.cudss_update(s.x_gpu, rhs)
@@ -322,7 +322,7 @@ end
 
 # --- Segmented graph capture via CUDAGraphs.@unsafe_scaptured ---
 
-MadIPM.@sync_annotate function MadIPM._captured_step!(
+function MadIPM._captured_step!(
     batch_solver::MadIPM.UniformBatchMPCSolver{T, <:CuMatrix{T}},
 ) where T
     na = batch_solver.kkt.active_batch_size[]
