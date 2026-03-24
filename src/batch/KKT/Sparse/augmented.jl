@@ -17,24 +17,10 @@ struct SparseUniformBatchKKTSystem{T, LS, MT, VI, VI32} <: AbstractBatchKKTSyste
     u_diag::MT              # (nub × batch_size) upper bound diagonals
     l_lower::MT             # (nlb × batch_size) lower bound multipliers
     u_lower::MT             # (nub × batch_size) upper bound multipliers
-    # Hessian gather-scatter (for mul!): fused CSR replaces scatter matrix + buffer
-    hess_rowptr::VI         # CSR row pointers for hess scatter (length n_tot+1)
-    hess_colidx::VI         # CSR col indices (entry indices into nzVals)
-    hess_nz_map::VI         # nzVals row indices (with sym duplication)
-    hess_var_map::VI        # variable indices for x multiplication
-    # J^T gather-scatter (for jtprod! and mul!)
-    jt_rowptr::VI           # CSR row pointers for jt scatter (length n_tot+1)
-    jt_colidx::VI           # CSR col indices for jt scatter
-    jt_nz_map::VI           # nzVals row indices for Jacobian entries
-    jt_con_map::VI          # maps each Jac nonzero to its constraint index (1:m)
-    jt_con_map_full::VI     # jt_con_map offset by n_tot (for indexing into full KKT vector)
-    # J gather-scatter (for mul!)
-    j_rowptr::VI            # CSR row pointers for j scatter (length m+1)
-    j_colidx::VI            # CSR col indices for j scatter
-    j_var_map::VI           # variable indices for J entries
-    # Workspace for mul! (GPU needs full matrices, not SubArray views)
-    _mul_w_primal::MT      # (n_tot × batch_size)
-    _mul_w_dual::MT        # (m × batch_size)
+    # operators for batch SpMV (jtprod! and KKT mul!)
+    hess_op::BatchSparseOp{VI}
+    jt_op::BatchSparseOp{VI}
+    j_op::BatchSparseOp{VI}
     # Batch tracking
     batch_map::Vector{Int}              # original index → active position (0 if inactive)
     batch_map_rev::Vector{Int}          # active position → original index
@@ -120,23 +106,23 @@ function MadNLP.create_kkt_system(
     hess_rowptr, hess_colidx, hess_nz_map, hess_var_map = _build_hess_scatter(
         I, J, n_tot, n_hess, nzVals, aug_csc_map, batch_size,
     )
+    hess_op = _build_op(hess_rowptr, hess_nz_map, hess_var_map, hess_colidx)
+
     jt_rowptr, jt_colidx, jt_nz_map, jt_con_map = _build_scatter(
         I, J, jac_range, n_tot, nzVals, aug_csc_map, batch_size,
     )
-    jt_con_map_full = similar(jt_con_map)
-    jt_con_map_full .= jt_con_map .+ Int32(n_tot)
+    jt_op = _build_op(jt_rowptr, jt_nz_map, jt_con_map, jt_colidx)
+
     j_rowptr, j_colidx, _, j_var_map = _build_jac_scatter(
         I, J, jac_range, n_tot, m, nzVals, aug_csc_map, batch_size,
     )
+    j_op = _build_op(j_rowptr, jt_nz_map, j_var_map, j_colidx)
 
     reg = similar(nzVals, n_tot, batch_size)
     l_diag = similar(nzVals, nlb, batch_size)
     u_diag = similar(nzVals, nub, batch_size)
     l_lower = similar(nzVals, nlb, batch_size)
     u_lower = similar(nzVals, nub, batch_size)
-
-    _mul_w_primal = similar(nzVals, n_tot, batch_size)
-    _mul_w_dual = similar(nzVals, m, batch_size)
 
     batch_map = collect(1:batch_size)
     batch_map_rev = collect(1:batch_size)
@@ -148,10 +134,7 @@ function MadNLP.create_kkt_system(
         nzVals, I, J, batch_ls, rhs_buffer, batch_size,
         aug_com_nzvals, batch_csc_map, n_tot, m, n_hess,
         reg, l_diag, u_diag, l_lower, u_lower,
-        hess_rowptr, hess_colidx, hess_nz_map, hess_var_map,
-        jt_rowptr, jt_colidx, jt_nz_map, jt_con_map, jt_con_map_full,
-        j_rowptr, j_colidx, j_var_map,
-        _mul_w_primal, _mul_w_dual,
+        hess_op, jt_op, j_op,
         batch_map, batch_map_rev, active_batch_size,
     )
 end
@@ -300,27 +283,33 @@ function MadNLP.factorize_wrapper!(batch_solver::AbstractBatchMPCSolver)
     return
 end
 
-function _gather_scatter!(
-    out::AbstractMatrix{T}, A::AbstractMatrix, nz_map, B::AbstractMatrix, val_map,
-    rowptr, colidx,
+function batch_spmv!(
+    out::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, op::BatchSparseOp,
+    alpha::T = one(T), beta::T = zero(T); val_offset::Int = 0,
 ) where T
-    fill!(out, zero(T))
+    _batch_mul_impl!(out, A, B, op.flat_nz, op.flat_val, op.rowptr, alpha, beta, Int32(val_offset))
+end
+
+function _batch_mul_impl!(
+    out::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix,
+    flat_nz, flat_val, rowptr, alpha, beta, val_offset::Int32 = Int32(0),
+) where T
     nout = length(rowptr) - 1
     bs = size(out, 2)
     @inbounds for r in 1:nout
-        for k in rowptr[r]:rowptr[r+1]-1
-            i = colidx[k]
-            for j in 1:bs
-                out[r, j] = muladd(A[nz_map[i], j], B[val_map[i], j], out[r, j])
+        for j in 1:bs
+            acc = zero(T)
+            for k in rowptr[r]:rowptr[r+1]-1
+                acc = muladd(A[flat_nz[k], j], B[flat_val[k] + val_offset, j], acc)
             end
+            out[r, j] = muladd(alpha, acc, beta * out[r, j])
         end
     end
     return out
 end
 
 function MadNLP.jtprod!(res::AbstractMatrix, bkkt::SparseUniformBatchKKTSystem, y::BatchVector)
-    _gather_scatter!(res, bkkt.nzVals, bkkt.jt_nz_map, MadNLP.full(y), bkkt.jt_con_map,
-                     bkkt.jt_rowptr, bkkt.jt_colidx)
+    batch_spmv!(res, bkkt.nzVals, MadNLP.full(y), bkkt.jt_op)
     return res
 end
 
@@ -395,24 +384,10 @@ function LinearAlgebra.mul!(
     beta = zero(T),
 ) where T
     nzV = bkkt.nzVals
-    wp = bkkt._mul_w_primal
-    wd = bkkt._mul_w_dual
-
-    # mul!(primal(w), Symmetric(hess_com, :L), primal(x), alpha, beta)
     xv = MadNLP.full(x)
-    _gather_scatter!(wp, nzV, bkkt.hess_nz_map, xv, bkkt.hess_var_map,
-                     bkkt.hess_rowptr, bkkt.hess_colidx)
-    MadNLP.primal(w) .= beta .* MadNLP.primal(w) .+ alpha .* wp
-
-    # mul!(primal(w), jac_com', dual(x), alpha, one(T))
-    _gather_scatter!(wp, nzV, bkkt.jt_nz_map, xv, bkkt.jt_con_map_full,
-                     bkkt.jt_rowptr, bkkt.jt_colidx)
-    MadNLP.primal(w) .+= alpha .* wp
-
-    # mul!(dual(w), jac_com, primal(x), alpha, beta)
-    _gather_scatter!(wd, nzV, bkkt.jt_nz_map, xv, bkkt.j_var_map,
-                     bkkt.j_rowptr, bkkt.j_colidx)
-    MadNLP.dual(w) .= beta .* MadNLP.dual(w) .+ alpha .* wd
+    batch_spmv!(MadNLP.primal(w), nzV, xv, bkkt.hess_op, alpha, beta)
+    batch_spmv!(MadNLP.primal(w), nzV, xv, bkkt.jt_op, alpha, one(T); val_offset=bkkt.n_tot)
+    batch_spmv!(MadNLP.dual(w), nzV, xv, bkkt.j_op, alpha, beta)
     _kktmul!(w, x, bkkt.reg, du_diag(bkkt), bkkt.l_lower, bkkt.u_lower, bkkt.l_diag, bkkt.u_diag, alpha, beta)
     return w
 end

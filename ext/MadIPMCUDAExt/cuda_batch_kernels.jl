@@ -143,33 +143,6 @@ function MadIPM._mehrotra_correct_steps!(
     end
 end
 
-@kernel function _gather_scatter_kernel!(
-    out, @Const(A), @Const(nz_map), @Const(B), @Const(val_map),
-    @Const(rowptr), @Const(colidx),
-)
-    j, r = @index(Global, NTuple)
-    val = zero(eltype(out))
-    @inbounds for k in rowptr[r]:rowptr[r+1]-1
-        i = colidx[k]
-        val = muladd(A[nz_map[i], j], B[val_map[i], j], val)
-    end
-    @inbounds out[r, j] = val
-end
-
-function MadIPM._gather_scatter!(
-    out::CuMatrix, A::CuMatrix, nz_map::CuVector, B::CuMatrix, val_map::CuVector,
-    rowptr::CuVector, colidx::CuVector,
-)
-    nout = length(rowptr) - 1
-    bs = size(out, 2)
-    if nout > 0
-        backend = CUDABackend()
-        _gather_scatter_kernel!(backend)(out, A, nz_map, B, val_map, rowptr, colidx;
-                                         ndrange=(bs, nout), workgroupsize=(32, 4))
-    end
-    return out
-end
-
 @kernel function _reduce_rhs_lb_kernel!(values, @Const(ind_lb), lb_off, @Const(l_diag))
     i, j = @index(Global, NTuple)
     @inbounds values[ind_lb[i], j] -= values[lb_off + i, j] / l_diag[i, j]

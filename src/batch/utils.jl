@@ -23,6 +23,19 @@ function zero_inactive_step!(batch_solver::AbstractBatchMPCSolver{T}) where T
     ws.alpha_d .*= ws.active_mask
 end
 
+struct BatchSparseOp{VI}
+    rowptr::VI
+    flat_nz::VI
+    flat_val::VI
+end
+function _build_op(rowptr, nz_map, val_map, colidx)
+    flat_nz = similar(nz_map, length(colidx))
+    flat_val = similar(val_map, length(colidx))
+    flat_nz .= nz_map[colidx]
+    flat_val .= val_map[colidx]
+    return BatchSparseOp(rowptr, flat_nz, flat_val)
+end
+
 function _coo_to_scatter(
     coo_I, nrows::Int, n_entries::Int,
     proto_I, nzVals::AbstractMatrix{T}, batch_size::Int,
