@@ -1,4 +1,4 @@
-import QuadraticModels: ObjRHSBatchQuadraticModel, BatchQuadraticModel, QPData
+import QuadraticModels: ObjRHSBatchQuadraticModel, BatchQuadraticModel, BatchLinearParametricQuadraticModel, QPData
 
 function NLPModels.obj!(
     bqp::ObjRHSBatchQuadraticModel{T, S, M1, M2, MT},
@@ -198,4 +198,171 @@ function Base.convert(::Type{BatchQuadraticModel{T, MT}}, bnlp::BatchQuadraticMo
         _hess_sym_gather_cols_gpu, _hess_sym_nzidx_gpu,
         _HX_gpu, _jac_buffer_gpu, _hess_buffer_gpu,
     )
+end
+
+function Base.convert(
+    ::Type{BatchLinearParametricQuadraticModel{T, S}},
+    bnlp::BatchLinearParametricQuadraticModel{T},
+) where {T, S <: CuArray}
+    nbatch = bnlp.meta.nbatch
+    nvar   = bnlp.meta.nvar
+    ncon   = bnlp.meta.ncon
+    nparam = size(bnlp.θ, 1)
+
+    # Shared QPData (H, A, c, v)
+    # H may be SparseMatrixCOO (from ExaModels) or SparseMatrixCSC (from manual construction)
+    H_cpu = bnlp.data.H
+    if H_cpu isa SparseMatrixCOO
+        H_orig_csr = CUSPARSE.CuSparseMatrixCSR(H_cpu)
+        H_full     = _expand_symmetric_coo(H_cpu)
+        H_full_csr = CUSPARSE.CuSparseMatrixCSR(H_full)
+    else
+        H_csc      = sparse(H_cpu)
+        H_orig_csr = CUSPARSE.CuSparseMatrixCSR(CUSPARSE.CuSparseMatrixCSC(H_csc))
+        H_sym      = H_csc + tril(H_csc, -1)'  # expand lower-triangular to full symmetric
+        H_full_csr = CUSPARSE.CuSparseMatrixCSR(CUSPARSE.CuSparseMatrixCSC(H_sym))
+    end
+    A_cpu = bnlp.data.A
+    A_csr = if A_cpu isa SparseMatrixCOO
+        CUSPARSE.CuSparseMatrixCSR(A_cpu)
+    else
+        CUSPARSE.CuSparseMatrixCSR(CUSPARSE.CuSparseMatrixCSC(sparse(A_cpu)))
+    end
+
+    H_op = MadIPMOperator(H_full_csr; symmetric = false, spmm_ncols = nbatch)
+    H_op.A = H_orig_csr
+    A_op = MadIPMOperator(A_csr; symmetric = false, spmm_ncols = nbatch)
+
+    c_gpu = CuVector{T}(bnlp.data.c)
+    v_gpu = CuVector{T}(bnlp.data.v)
+    data_gpu = QPData(bnlp.data.c0, c_gpu, v_gpu, H_op, A_op)
+
+    # Parametric matrices F, B → GPU sparse CSC
+    # (CSC supports transpose mul! natively via CUSPARSE, needed for grad_param!/jptprod!)
+    F_gpu = CUSPARSE.CuSparseMatrixCSC(sparse(bnlp.F))
+    B_gpu = CUSPARSE.CuSparseMatrixCSC(sparse(bnlp.B))
+
+    # Per-instance and shared arrays
+    θ_gpu       = CuMatrix{T}(bnlp.θ)
+    c_base_gpu  = CuVector{T}(bnlp.c_base)
+    c_batch_gpu = CuMatrix{T}(bnlp.c_batch)
+    _Bθ_gpu     = CuMatrix{T}(bnlp._Bθ)
+    _HX_gpu     = CUDA.zeros(T, nvar, nbatch)
+
+    VT = typeof(c_gpu)
+    MT = typeof(c_batch_gpu)
+
+    meta_gpu = NLPModels.BatchNLPModelMeta{T, MT}(
+        nbatch, nvar;
+        x0   = CuMatrix{T}(bnlp.meta.x0),
+        lvar = CuMatrix{T}(bnlp.meta.lvar),
+        uvar = CuMatrix{T}(bnlp.meta.uvar),
+        ncon = ncon,
+        lcon = CuMatrix{T}(bnlp.meta.lcon),
+        ucon = CuMatrix{T}(bnlp.meta.ucon),
+        nnzj = bnlp.meta.nnzj,
+        nnzh = bnlp.meta.nnzh,
+        islp = bnlp.meta.islp,
+        nparam = nparam,
+        nnzgp  = nparam,
+        nnzjp  = nnz(bnlp.B),
+        nnzhp  = nnz(bnlp.F),
+        grad_param_available = nparam > 0,
+        jac_param_available  = nparam > 0 && ncon > 0,
+        hess_param_available = nparam > 0,
+        jpprod_available     = nparam > 0 && ncon > 0,
+        jptprod_available    = nparam > 0 && ncon > 0,
+        hpprod_available     = nparam > 0,
+        hptprod_available    = nparam > 0,
+    )
+
+    return BatchLinearParametricQuadraticModel{T, VT, typeof(H_op), typeof(A_op), typeof(F_gpu), typeof(B_gpu), MT}(
+        meta_gpu, data_gpu, F_gpu, B_gpu, θ_gpu, c_base_gpu, c_batch_gpu, _Bθ_gpu, _HX_gpu,
+    )
+end
+
+# ── GPU dispatches for BatchLinearParametricQuadraticModel ────────────────────
+
+function NLPModels.obj!(
+    bqp::BatchLinearParametricQuadraticModel{T, S, M1, M2, MF, MB, MT},
+    bx::AbstractMatrix{T}, bf::AbstractVector{T},
+) where {T, S, M1 <: MadIPMOperator, M2, MF, MB, MT}
+    _objrhs = ObjRHSBatchQuadraticModel{T, S, M1, M2, MT}(
+        bqp.meta, bqp.data, bqp.c_batch, bqp._HX,
+        similar(bqp._HX, T, bqp.meta.ncon, bqp.meta.nbatch),
+    )
+    return NLPModels.obj!(_objrhs, bx, bf)
+end
+
+function NLPModels.grad!(
+    bqp::BatchLinearParametricQuadraticModel{T, S, M1, M2, MF, MB, MT},
+    bx::AbstractMatrix{T}, bg::AbstractMatrix{T},
+) where {T, S, M1 <: MadIPMOperator, M2, MF, MB, MT}
+    _objrhs = ObjRHSBatchQuadraticModel{T, S, M1, M2, MT}(
+        bqp.meta, bqp.data, bqp.c_batch, bqp._HX,
+        similar(bqp._HX, T, bqp.meta.ncon, bqp.meta.nbatch),
+    )
+    return NLPModels.grad!(_objrhs, bx, bg)
+end
+
+function NLPModels.cons!(
+    bqp::BatchLinearParametricQuadraticModel{T, S, M1, M2, MF, MB, MT},
+    bx::AbstractMatrix{T}, bc::AbstractMatrix{T},
+) where {T, S, M1, M2 <: MadIPMOperator, MF, MB, MT}
+    mul!(bc, bqp.data.A, bx)
+    bc .+= bqp._Bθ
+    return bc
+end
+
+function NLPModels.hprod!(
+    bqp::BatchLinearParametricQuadraticModel{T, S, M1, M2, MF, MB, MT},
+    bx::AbstractMatrix{T}, by::AbstractMatrix{T}, bv::AbstractMatrix{T},
+    bobj_weight::AbstractVector{T}, bHv::AbstractMatrix{T},
+) where {T, S, M1 <: MadIPMOperator, M2, MF, MB, MT}
+    _objrhs = ObjRHSBatchQuadraticModel{T, S, M1, M2, MT}(
+        bqp.meta, bqp.data, bqp.c_batch, bqp._HX,
+        similar(bqp._HX, T, bqp.meta.ncon, bqp.meta.nbatch),
+    )
+    return NLPModels.hprod!(_objrhs, bx, by, bv, bobj_weight, bHv)
+end
+
+function NLPModels.jac_structure!(
+    bqp::BatchLinearParametricQuadraticModel{T, S, M1, M2},
+    jrows::AbstractVector{<:Integer},
+    jcols::AbstractVector{<:Integer},
+) where {T, S, M1, M2 <: MadIPMOperator}
+    fill_structure!(bqp.data.A.A, jrows, jcols)
+    return jrows, jcols
+end
+
+function NLPModels.hess_structure!(
+    bqp::BatchLinearParametricQuadraticModel{T, S, M1, M2},
+    hrows::AbstractVector{<:Integer},
+    hcols::AbstractVector{<:Integer},
+) where {T, S, M1 <: MadIPMOperator, M2}
+    fill_structure!(bqp.data.H.A, hrows, hcols)
+    return hrows, hcols
+end
+
+function NLPModels.jac_coord!(
+    bqp::BatchLinearParametricQuadraticModel{T, S, M1, M2},
+    bx::AbstractMatrix,
+    bjvals::AbstractMatrix,
+) where {T, S, M1, M2 <: MadIPMOperator}
+    bjvals .= bqp.data.A.A.nzVal
+    return bjvals
+end
+
+function NLPModels.hess_coord!(
+    bqp::BatchLinearParametricQuadraticModel{T, S, M1, M2},
+    bx::AbstractMatrix,
+    by::AbstractMatrix,
+    bobj_weight::AbstractVector,
+    bhvals::AbstractMatrix,
+) where {T, S, M1 <: MadIPMOperator, M2}
+    H = bqp.data.H.A
+    nnzh = nnz(H)
+    nnzh == 0 && return bhvals
+    mul!(bhvals, H.nzVal, bobj_weight')
+    return bhvals
 end

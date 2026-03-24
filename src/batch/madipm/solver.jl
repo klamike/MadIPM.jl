@@ -342,7 +342,7 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
         any(ws.status[i] == MadNLP.REGULAR && bcnt.k[i] >= opt.max_iter for i in 1:bs)
 
     if !walltime_hit && !max_iter_hit
-        copyto!(ws._any_nonregular_cpu, vec(ws._any_nonregular_gpu))
+        copyto!(ws._any_nonregular_cpu, vec(ws._any_nonregular_gpu))  # TODO: use CuRef
         ws._any_nonregular_cpu[1] == Int_REGULAR && return false
     end
 
@@ -483,7 +483,7 @@ function apply_step!(batch_solver::AbstractBatchMPCSolver)
     end
 
     _adjust_boundary_active!(lower(x), lower(xl), upper(x), upper(xu), ws.mu_batch, ws.active_mask)
-    increment_k!(batch_solver)
+    increment_k!(batch_solver)  # this is CPU work, ends up overlapped
     return
 end
 
