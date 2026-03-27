@@ -220,4 +220,5 @@ include("batch_kernels/runtests.jl")
 if CUDA.functional()
     include("test_gpu.jl")
     include("test_batch_gpu.jl")
+    include("test_segmented_graph.jl")
 end

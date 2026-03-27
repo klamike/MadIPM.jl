@@ -1,6 +1,17 @@
 using MadNLPGPU
 import LinearAlgebra: BlasFloat
 
+const _SEG_CACHE = Ref{CUDAGraphs.SegmentedGraphCache}()
+const _SEG_CACHE_NA = Ref(-1)
+
+function MadIPM.solve!(batch_solver::MadIPM.UniformBatchMPCSolver{T, MT, VT}) where {T, MT<:CuMatrix{T}, VT}
+    if isassigned(_SEG_CACHE)
+        CUDAGraphs.invalidate!(_SEG_CACHE[])
+        _SEG_CACHE_NA[] = -1
+    end
+    return invoke(MadIPM.solve!, Tuple{MadIPM.AbstractBatchMPCSolver{T, MT, VT}}, batch_solver)
+end
+
 @kernel function _transfer_to_map!(dest, to_map, src)
     k = @index(Global, Linear)
     @inbounds begin
@@ -202,19 +213,32 @@ end
 
 MadIPM.is_factorized(::MadNLPGPU.CUDSSSolver) = true
 
-function MadIPM.factorize_active!(s::MadNLPGPU.CUDSSSolver, active::MadIPM.BatchView)
+@graphbreak function MadIPM.factorize_active!(s::MadNLPGPU.CUDSSSolver, active::MadIPM.BatchView)
     na = MadIPM.local_batch_size(active)
     CUDSS.cudss_set(s.inner, "ubatch_size", na)
     MadNLP.factorize!(s)
     return
 end
 
-function MadIPM.solve_active!(s::MadNLPGPU.CUDSSSolver{T}, rhs::CuMatrix{T}, active::MadIPM.BatchView) where T
+@graphbreak function MadIPM.solve_active!(s::MadNLPGPU.CUDSSSolver{T}, rhs::CuMatrix{T}, active::MadIPM.BatchView) where T
     na = MadIPM.local_batch_size(active)
     n = size(rhs, 1)
     rhs_active = unsafe_wrap(CuArray{T, 2}, pointer(rhs), (n, na))
     CUDSS.cudss_update(s.b_gpu, rhs_active)
     CUDSS.cudss_update(s.x_gpu, rhs_active)
     CUDSS.cudss("solve", s.inner, s.x_gpu, s.b_gpu, asynchronous=s.opt.cudss_asynchronous)
+    return
+end
+
+function MadIPM.mpc_step!(batch_solver::MadIPM.UniformBatchMPCSolver{T, MT, VT}) where {T, MT<:CuMatrix{T}, VT}
+    cache = _SEG_CACHE[]
+    na = MadIPM.active_batch_size(batch_solver)
+    if _SEG_CACHE_NA[] != na
+        CUDAGraphs.invalidate!(cache)
+        _SEG_CACHE_NA[] = na
+    end
+    CUDAGraphs.@unsafe_scaptured cache begin
+        invoke(MadIPM.mpc_step!, Tuple{MadIPM.AbstractBatchMPCSolver}, batch_solver)
+    end
     return
 end

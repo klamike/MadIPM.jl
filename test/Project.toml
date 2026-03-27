@@ -6,6 +6,7 @@ Artifacts = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 BatchQuadraticModels = "412afcf0-3ec6-4826-be17-8d792afa05a8"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CUDAGraphs = "c66d65b5-1435-428e-a98f-c21a2a531f64"
 CompilerSupportLibraries_jll = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
@@ -68,4 +69,5 @@ p7zip_jll = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 
 [sources]
 BatchQuadraticModels = {rev = "main", url = "https://github.com/klamike/BatchQuadraticModels.jl"}
+CUDAGraphs = {path = "../../CUDAGraphs.jl"}
 MadIPM = {path = ".."}

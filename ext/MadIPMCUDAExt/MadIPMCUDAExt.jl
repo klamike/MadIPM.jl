@@ -7,6 +7,7 @@ using BatchQuadraticModels
 using QuadraticModels
 using CUDA
 using CUDA.CUSPARSE
+using CUDAGraphs
 using CUDSS
 using KernelAbstractions
 import Atomix
@@ -18,6 +19,20 @@ import MadNLP
 include("operators.jl")
 include("cuda_wrapper.jl")
 include("cuda_batch_kernels.jl")
+
+function __init__()
+    _SEG_CACHE[] = CUDAGraphs.SegmentedGraphCache()
+    _SEG_CACHE_NA[] = -1
+    @eval begin
+        @inline CUDA.is_capturing(stream::CUDA.CuStream) =
+            CUDAGraphs._in_unsafe_capture() ? true :
+            CUDAGraphs._in_unsafe_replay() ? false :
+            (CUDA.capture_status(stream).status != CUDA.STREAM_CAPTURE_STATUS_NONE)
+
+        @inline CUDA.isvalid(ctx::CUDA.CuContext) =
+            CUDAGraphs._in_unsafe_scaptured() ? true : CUDAGraphs._isvalid_ctx(ctx)
+    end
+end
 
 function MadIPM._csc_with_nzval(A::CUSPARSE.CuSparseMatrixCSC, nzval, n)
     return CUSPARSE.CuSparseMatrixCSC(A.colPtr, A.rowVal, nzval, (n, n))

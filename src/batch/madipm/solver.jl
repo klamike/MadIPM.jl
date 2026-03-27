@@ -240,7 +240,7 @@ function initialize_solver_state!(batch_solver::AbstractBatchMPCSolver{T}) where
     fill!(ws.best_complementarity, typemax(T))
     fill!(ws.status, MadNLP.REGULAR)
     reset_active_view!(batch_solver.batch_views)
-    _update_active_mask!(batch_solver)
+    update_active_mask!(batch_solver)
     fill!(ws.inf_pr, zero(T))
     fill!(ws.inf_du, zero(T))
     fill!(ws.inf_compl, zero(T))
@@ -521,24 +521,33 @@ function mpc_step!(batch_solver::AbstractBatchMPCSolver)
     evaluate_model!(batch_solver)
 end
 
-function _update_active_mask!(batch_solver::AbstractBatchMPCSolver{T}) where T
+function update_active_mask!(batch_solver::AbstractBatchMPCSolver{T}) where T
     ws = batch_solver.workspace
     buf = ws.active_mask_cpu
     fill_batch_view_mask!(buf, active_view(batch_solver.batch_views))
     copyto!(ws.active_mask, buf)
 end
 
+function handle_status_change!(batch_solver::AbstractBatchMPCSolver)
+    update_active_set!(batch_solver)
+    active_batch_size(batch_solver) == 0 && return false
+    update_active_mask!(batch_solver)
+    return true
+end
+
+function mpc_iteration!(batch_solver::AbstractBatchMPCSolver)
+    MadNLP.print_iter(batch_solver)
+    changed = update_termination_status!(batch_solver)
+    changed && !handle_status_change!(batch_solver) && return false
+    mpc_step!(batch_solver)
+    update_termination_criteria!(batch_solver)
+    return true
+end
+
 function mpc!(batch_solver::AbstractBatchMPCSolver)
+    update_termination_criteria!(batch_solver)
     while true
-        MadNLP.print_iter(batch_solver)
-        update_termination_criteria!(batch_solver)
-        changed = update_termination_status!(batch_solver)
-        if changed
-            update_active_set!(batch_solver)
-            active_batch_size(batch_solver) == 0 && return
-            _update_active_mask!(batch_solver)
-        end
-        mpc_step!(batch_solver)
+        mpc_iteration!(batch_solver) || return
     end
 end
 
