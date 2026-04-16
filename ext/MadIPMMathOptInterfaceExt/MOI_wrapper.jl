@@ -2,7 +2,7 @@
 mutable struct Optimizer <: MOI.AbstractOptimizer
     options::Dict{String, Any}
     silent::Bool
-    solver::Union{Nothing, MadIPM.MPCSolver}
+    solver::Union{Nothing, MadNLP.AbstractMadNLPSolver}
     qp::Union{Nothing, QuadraticModel}
     array_type::Type{<:AbstractVector{Float64}}
     stats::Union{
@@ -237,8 +237,7 @@ function MOI.get(
     c::MOI.ConstraintIndex{MOI.ScalarAffineFunction{Float64},S},
 ) where {S<:_SCALAR_SETS}
     MOI.check_result_index_bounds(model, attr)
-    s = -_dual_multiplier(model)
-    return s * model.stats.multipliers[c.value+1]
+    return -model.stats.multipliers[c.value+1]
 end
 
 MOI.get(optimizer::Optimizer, ::MOI.ResultCount) = 1
