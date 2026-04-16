@@ -312,33 +312,34 @@ _rowval(A::SparseArrays.SparseMatrixCSC) = A.rowval
 _nzval(A::SparseArrays.SparseMatrixCSC) = A.nzval
 
 #=
-    QuadraticModels wrapper
+    Model helpers
 =#
 
 """
     presolved_qp, flag = presolve_qp(qp::QuadraticModel)
 
-Run basic presolve routines implemented in `QuadraticModels.presolve` and return
-a new QuadraticModel if flag is `true`.
-
-If `flag` is `false`, the initial `qp` is returned.
+Return a conservative copy of `qp` together with `true`.
 """
-function presolve_qp(qp::QuadraticModels.QuadraticModel)
-    # Use routine implemented in QuadraticModels
-    res = QuadraticModels.presolve(qp)
-    qp_presolved = res.solver_specific[:presolvedQM]
-    if qp_presolved != nothing
-        new_qp = QuadraticModels.QuadraticModel(
-            qp_presolved.meta,
-            qp_presolved.counters,
-            qp_presolved.data,
-        )
-        resize!(new_qp.data.v, NLPModels.get_nvar(new_qp))
-        return new_qp, true
-    else
-        # unbounded, infeasible or nvarps == 0
-        return qp, false
-    end
+function presolve_qp(qp::QuadraticModel)
+    data = QPData(
+        copy(qp.data.A),
+        copy(qp.data.c),
+        copy(qp.data.Q);
+        lcon = copy(qp.meta.lcon),
+        ucon = copy(qp.meta.ucon),
+        lvar = copy(qp.meta.lvar),
+        uvar = copy(qp.meta.uvar),
+        c0 = qp.data.c0,
+        _v = copy(qp.data._v),
+    )
+    new_qp = QuadraticModel(
+        data;
+        x0 = copy(qp.meta.x0),
+        y0 = copy(qp.meta.y0),
+        minimize = qp.meta.minimize,
+        name = qp.meta.name,
+    )
+    return new_qp, true
 end
 
 """
@@ -369,9 +370,10 @@ min_{x,s,w}  c'x
 ```
 Equality constraints are preserved as-is.
 """
-function standard_form_qp(qp::QuadraticModels.QuadraticModel)
+function standard_form_qp(qp::QuadraticModel)
     n = NLPModels.get_nvar(qp)
     m = NLPModels.get_ncon(qp)
+    T = eltype(qp.meta.x0)
 
     lvar, uvar = NLPModels.get_lvar(qp), NLPModels.get_uvar(qp)
     lcon, ucon = NLPModels.get_lcon(qp), NLPModels.get_ucon(qp)
@@ -387,7 +389,7 @@ function standard_form_qp(qp::QuadraticModels.QuadraticModel)
     ind_rng = Int[]
     ind_only_ub = Int[]
     ind_fixed = Int[]
-    xu = Float64[]
+    xu = T[]
     for i in 1:n
         if (lvar[i] == uvar[i])
             # Fixed variable
@@ -420,42 +422,45 @@ function standard_form_qp(qp::QuadraticModels.QuadraticModel)
     ncon = m + nw
 
     # Build A and H
-    Hs = SparseMatrixCOO(nvar, nvar, qp.data.H.rows, qp.data.H.cols, qp.data.H.vals)
+    Qi, Qj, Qx = SparseArrays.findnz(qp.data.Q)
+    Qs = SparseArrays.sparse(Qi, Qj, Qx, nvar, nvar)
 
     Ai, Aj, Ax = SparseArrays.findnz(qp.data.A)
-    Bi, Bj, Bx = similar(Ai, ns+2*nw), similar(Aj, ns+2nw), similar(Ax, ns+2*nw)
+    Bi = Vector{Int}(undef, ns + 2 * nw)
+    Bj = Vector{Int}(undef, ns + 2 * nw)
+    Bx = Vector{T}(undef, ns + 2 * nw)
 
     cnt = 1
     # Slack contribution Ax - s = 0
     for (k, i) in enumerate(ind_ineq)
         Bi[cnt] = i
         Bj[cnt] = n + k
-        Bx[cnt] = -1.0
+        Bx[cnt] = T(-1)
         cnt += 1
     end
     # Range reformulation x + w = xu
     for (k, i) in enumerate(ind_rng)
         Bi[cnt] = m + k
         Bj[cnt] = i
-        Bx[cnt] = 1.0
+        Bx[cnt] = one(T)
         cnt += 1
         Bi[cnt] = m + k
         Bj[cnt] = k + n + ns
-        Bx[cnt] = 1.0
+        Bx[cnt] = one(T)
         cnt += 1
     end
 
-    As = SparseMatrixCOO(ncon, nvar, [Ai; Bi], [Aj; Bj], [Ax; Bx])
+    As = SparseArrays.sparse([Ai; Bi], [Aj; Bj], [Ax; Bx], ncon, nvar)
 
     # Build constraints' lower and upper bounds
-    lcon_ = zeros(ncon)
-    ucon_ = zeros(ncon)
+    lcon_ = zeros(T, ncon)
+    ucon_ = zeros(T, ncon)
 
     for i in 1:m
         if lcon[i] < ucon[i]
             # inequality constraints
-            lcon_[i] = 0.0
-            ucon_[i] = 0.0
+            lcon_[i] = zero(T)
+            ucon_[i] = zero(T)
         else
             # equality constraints
             lcon_[i] = lcon[i]
@@ -467,39 +472,29 @@ function standard_form_qp(qp::QuadraticModels.QuadraticModel)
         ucon_[m + k] = xu[k]
     end
 
-    lvar_ = [lvar; lcon[ind_ineq]; zeros(nw)]
-    uvar_ = [uvar; ucon[ind_ineq]; fill(Inf, nw)]
+    lvar_ = [lvar; lcon[ind_ineq]; zeros(T, nw)]
+    uvar_ = [uvar; ucon[ind_ineq]; fill(T(Inf), nw)]
     # The upper bounds in range constraints have been moved in a separate constraint
-    uvar_[ind_rng] .= Inf
+    uvar_[ind_rng] .= T(Inf)
     # Keep fixed variables in the formulation
     uvar_[ind_fixed] .= uvar[ind_fixed]
 
-    data = QuadraticModels.QPData(
-        qp.data.c0,
-        [qp.data.c; zeros(ns + nw)],
-        [qp.data.v; zeros(ns + nw)],
-        Hs,
+    data = QPData(
         As,
+        [qp.data.c; zeros(T, ns + nw)],
+        Qs;
+        lcon = lcon_,
+        ucon = ucon_,
+        lvar = lvar_,
+        uvar = uvar_,
+        c0 = qp.data.c0,
+        _v = [qp.data._v; zeros(T, ns + nw)],
     )
-
-    return QuadraticModels.QuadraticModel(
-        NLPModels.NLPModelMeta(
-            nvar;
-            ncon=ncon,
-            lvar=lvar_,
-            uvar=uvar_,
-            lcon=lcon_,
-            ucon=ucon_,
-            x0=[qp.meta.x0; zeros(ns + nw)],
-            y0=[qp.meta.y0; zeros(nw)],
-            nnzj=qp.meta.nnzj + ns + 2*nw,
-            lin_nnzj=qp.meta.nnzj + ns + 2*nw,
-            lin=[qp.meta.lin; (m+1:m+nw)],
-            nnzh=qp.meta.nnzh,
-            minimize=qp.meta.minimize,
-        ),
-        NLPModels.Counters(),
-        data,
+    return QuadraticModel(
+        data;
+        x0 = [qp.meta.x0; zeros(T, ns + nw)],
+        y0 = [qp.meta.y0; zeros(T, nw)],
+        minimize = qp.meta.minimize,
+        name = qp.meta.name,
     )
 end
-

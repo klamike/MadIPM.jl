@@ -1,4 +1,5 @@
 using DelimitedFiles
+using Adapt
 using MadNLP
 using MadIPM
 using QPSReader
@@ -32,7 +33,7 @@ function run_benchmark(src, probs; reformulate::Bool=false, test_reader::Bool=fa
             qp_cpu = reformulate ? MadIPM.standard_form_qp(scaled_qp) : scaled_qp
 
             # Transfer data to the GPU
-            qp_gpu = convert(QuadraticModel{Float64, CuVector{Float64}}, qp_cpu)
+            qp_gpu = adapt(CuArray, qp_cpu)
 
             try
                 solver = MadIPM.MPCSolver(

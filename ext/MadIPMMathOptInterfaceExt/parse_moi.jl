@@ -1,7 +1,5 @@
 # Adapted from NLPModelsJuMP
 
-import QuadraticModels: SparseMatrixCOO
-
 const MOI = MathOptInterface
 
 const VI = MOI.VariableIndex
@@ -140,7 +138,8 @@ function parse_objective(moimodel, index_map, nvar)
                 push!(rows, j)
                 push!(cols, i)
             end
-            push!(vals, term.coefficient)
+            coeff = term.coefficient
+            push!(vals, coeff)
         end
     end
     return rows, cols, vals, vect, constant
@@ -164,33 +163,21 @@ function qp_model(moimodel::MOI.ModelLike)
 
     ncon = length(lb)
 
-    A = SparseMatrixCOO(ncon, nvar, Ai, Aj, Ax)
-    Q = SparseMatrixCOO(nvar, nvar, Qi, Qj, Qx)
-
-    data = QuadraticModels.QPData(
-        d,
-        c,
-        zeros(length(c)),
-        Q,
+    A = SparseArrays.sparse(Ai, Aj, Ax, ncon, nvar)
+    Q = SparseArrays.sparse(Qi, Qj, Qx, nvar, nvar)
+    data = MadIPM.QPData(
         A,
+        c,
+        Q;
+        lcon = lb,
+        ucon = ub,
+        lvar = lvar,
+        uvar = uvar,
+        c0 = d,
     )
-    return QuadraticModels.QuadraticModel(
-        NLPModels.NLPModelMeta(
-            nvar;
-            ncon=ncon,
-            lvar=lvar,
-            uvar=uvar,
-            lcon=lb,
-            ucon=ub,
-            x0=x0,
-            y0=zeros(ncon),
-            nnzj=length(Ai),
-            lin_nnzj=length(Ai),
-            lin=collect(1:ncon),
-            nnzh=length(Qi),
-            minimize=minimize,
-        ),
-        NLPModels.Counters(),
-        data,
+    return MadIPM.QuadraticModel(
+        data;
+        x0 = x0,
+        minimize = minimize,
     ), index_map
 end

@@ -96,9 +96,7 @@ MOI.supports_constraint(::Optimizer, ::Type{SAF}, ::Type{<:_SCALAR_SETS}) = true
 function MOI.copy_to(dest::Optimizer, src::MOI.ModelLike)
     dest.qp, index_map = qp_model(src)
     if dest.array_type != Vector{Float64}
-        VT = dest.array_type
-        T = eltype(VT)
-        dest.qp = convert(QuadraticModel{T, VT}, dest.qp)
+        dest.qp = Adapt.adapt(dest.array_type, dest.qp)
     end
     return index_map
 end

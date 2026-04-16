@@ -4,8 +4,9 @@ using MathOptInterface
 using MadNLP
 using MadIPM
 using MadNLPTests
-using QuadraticModels
+using NLPModels
 using CUDA
+using SparseArrays
 
 function _compare_with_nlp(n, m, ind_fixed, ind_eq; max_ncorr=0, atol=1e-5)
     x0 = zeros(n)
@@ -28,35 +29,25 @@ end
 
 function simple_lp()
     c = ones(2)
-    Hrows = Int[]
-    Hcols = Int[]
-    Hvals = Float64[]
-    Arows = [1, 1]
-    Acols = [1, 2]
-    Avals = [1.0; 1.0]
-    c0 = 0.0
-    lvar = [0.0; 0.0]
-    uvar = [Inf; Inf]
-    lcon = [1.0]
-    ucon = [1.0]
-    x0 = ones(2)
-
-    return QuadraticModel(
+    A = sparse([1, 1], [1, 2], [1.0, 1.0], 1, 2)
+    Q = sparse(Int[], Int[], Float64[], 2, 2)
+    data = QPData(
+        A,
         c,
-        Hrows,
-        Hcols,
-        Hvals,
-        Arows = Arows,
-        Acols = Acols,
-        Avals = Avals,
-        lcon = lcon,
-        ucon = ucon,
-        lvar = lvar,
-        uvar = uvar,
-        c0 = c0,
-        x0 = x0,
-        name = "simpleLP",
+        Q;
+        lcon = [1.0],
+        ucon = [1.0],
+        lvar = [0.0, 0.0],
+        uvar = [Inf, Inf],
+        c0 = 0.0,
     )
+    return QuadraticModel(data)
+end
+
+function simple_qp_cross_term()
+    A = sparse(Int[], Int[], Float64[], 0, 2)
+    Q = sparse([2], [1], [1.0], 2, 2)
+    return QuadraticModel(QPData(A, zeros(2), Q))
 end
 
 @testset "Test with DenseDummyQP" begin
@@ -195,11 +186,27 @@ end
     end
 end
 
+@testset "Quadratic cross term" begin
+    qp = simple_qp_cross_term()
+    x = [3.0, 5.0]
+    g = zeros(2)
+    NLPModels.grad!(qp, x, g)
+    @test g ≈ [5.0, 3.0]
+    @test NLPModels.obj(qp, x) ≈ 15.0
+end
+
 @testset "Fixed variable with MakeParameter" begin
     solver = MadIPM.MPCSolver(
-        QuadraticModel([1.0, 1.0, 1.0], Int[], Int[], Float64[];
-            lcon=[1.0], Arows=[1, 1], Acols=[1, 2], Avals=[1.0, 1.0], ucon=[Inf],
-            lvar=[0.0, 0.0, 2.0], x0=[1.0, 1.0, 1.0], uvar=[Inf, Inf, 2.0],
+        QuadraticModel(
+            QPData(
+                sparse([1, 1], [1, 2], [1.0, 1.0], 1, 3),
+                [1.0, 1.0, 1.0],
+                sparse(Int[], Int[], Float64[], 3, 3);
+                lcon = [1.0],
+                ucon = [Inf],
+                lvar = [0.0, 0.0, 2.0],
+                uvar = [Inf, Inf, 2.0],
+            ),
         );
         print_level=MadNLP.ERROR,
         fixed_variable_treatment=MadNLP.MakeParameter,

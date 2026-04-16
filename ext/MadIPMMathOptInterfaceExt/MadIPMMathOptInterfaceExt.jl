@@ -13,11 +13,13 @@
 
 module MadIPMMathOptInterfaceExt
 
+using Adapt
 using MathOptInterface
-using QuadraticModels
+using SparseArrays
 import NLPModels
 import MadNLP
 import MadIPM
+using MadIPM: QuadraticModel
 
 const MOI = MathOptInterface
 
@@ -29,4 +31,3 @@ function __init__()
 end
 
 end
-
