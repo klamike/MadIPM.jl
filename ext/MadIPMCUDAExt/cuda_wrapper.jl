@@ -4,22 +4,13 @@ import LinearAlgebra: BlasFloat
 @kernel function _transfer_to_map!(dest, to_map, src)
     k = @index(Global, Linear)
     @inbounds begin
-        # TODO: do we need Atomix?
-        dest[to_map[k]] += src[k]
+        Atomix.@atomic dest[to_map[k]] += src[k]
     end
 end
 
-function MadNLP.transfer!(
-    dest::CUSPARSE.CuSparseMatrixCSC{Tv},
-    src::MadNLP.SparseMatrixCOO{Tv},
-    map::CuVector{Int},
-) where {Tv}
+function MadNLP.transfer!(dest::CUSPARSE.CuSparseMatrixCSC{Tv}, src::MadNLP.SparseMatrixCOO{Tv}, map::CuVector{Int}) where {Tv}
     fill!(nonzeros(dest), zero(Tv))
-    if length(map) > 0
-        backend = CUDABackend()
-        _transfer_to_map!(backend)(nonzeros(dest), map, src.V; ndrange=length(map))
-        KernelAbstractions.synchronize(backend)
-    end
+    length(map) > 0 && _transfer_to_map!(CUDABackend())(nonzeros(dest), map, src.V; ndrange = length(map))
     return
 end
 
@@ -34,8 +25,6 @@ function MadNLP.compress_jacobian!(
 ) where {T,VT,MT<:CUSPARSE.CuSparseMatrixCSC{T,Int32}}
     n_slack = length(kkt.ind_ineq)
     kkt.A.V[end-n_slack+1:end] .= -1.0
-    # Transfer to the matrix A stored in CSC format
-    fill!(kkt.AT.nzVal, 0.0)
     kkt.AT.nzVal .= kkt.A.V[kkt.A_csr_map]
     return
 end
@@ -85,21 +74,8 @@ end
     nothing
 end
 
-function MadIPM.assemble_normal_system!(
-    n_rows,
-    n_cols,
-    Jtp::CuArray{Ti},
-    Jtj::CuArray{Ti},
-    Jtx::CuArray{Tv},
-    Cp::CuArray{Ti},
-    Cj::CuArray{Ti},
-    Cx::CuArray{Tv},
-    Dx::CuArray{Tv},
-) where {Ti, Tv}
-    backend = CUDABackend()
-    kernel! = assemble_normal_system_kernel!(backend)
-    kernel!(n_rows, n_cols, Jtp, Jtj, Jtx, Cp, Cj, Cx, Dx, Tv; ndrange = n_rows)
-    KernelAbstractions.synchronize(backend)
+function MadIPM.assemble_normal_system!(n_rows, n_cols, Jtp::CuArray{Ti}, Jtj::CuArray{Ti}, Jtx::CuArray{Tv}, Cp::CuArray{Ti}, Cj::CuArray{Ti}, Cx::CuArray{Tv}, Dx::CuArray{Tv}) where {Ti, Tv}
+    assemble_normal_system_kernel!(CUDABackend())(n_rows, n_cols, Jtp, Jtj, Jtx, Cp, Cj, Cx, Dx, Tv; ndrange = n_rows)
 end
 
 @kernel function count_normal_nnz!(Cp, @Const(Jtp), @Const(Jtj), @Const(n_rows), @Const(n_cols))
@@ -158,25 +134,14 @@ end
     nothing
 end
 
-function MadIPM.build_normal_system(
-    n_rows,
-    n_cols,
-    Jtp::CuVector{Ti},
-    Jtj::CuVector{Ti},
-) where {Ti}
+function MadIPM.build_normal_system(n_rows, n_cols, Jtp::CuVector{Ti}, Jtj::CuVector{Ti}) where {Ti}
     backend = CUDABackend()
     Cp = CUDA.ones(Ti, n_rows + 1)
-    kernel1! = count_normal_nnz!(backend)
-    kernel1!(Cp, Jtp, Jtj, n_rows, n_cols; ndrange = n_rows)
-    KernelAbstractions.synchronize(backend)
-
+    count_normal_nnz!(backend)(Cp, Jtp, Jtj, n_rows, n_cols; ndrange = n_rows)
     Cp = cumsum(Cp)
     nnz_JtJ = CUDA.@allowscalar (Cp[end] - 1)
     Cj = CUDA.zeros(Ti, nnz_JtJ)
-
-    kernel2! = fill_normal_indices!(backend)
-    kernel2!(Cj, Cp, Jtp, Jtj, n_rows, n_cols; ndrange = n_rows)
-    KernelAbstractions.synchronize(backend)
+    fill_normal_indices!(backend)(Cj, Cp, Jtp, Jtj, n_rows, n_cols; ndrange = n_rows)
     return (Cp, Cj)
 end
 
