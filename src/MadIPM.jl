@@ -10,8 +10,9 @@ import MadNLP
 import MadNLP: full, LDLFactorizations
 import NLPModels
 import BatchQuadraticModels: LPData, LinearModel, QPData, QuadraticModel,
-    StandardFormWorkspace, standard_form, update_standard_form!,
+    StandardFormWorkspace, BatchStandardFormWorkspace, standard_form, update_standard_form!,
     recover_primal, recover_primal!, recover_variable_multipliers!,
+    ObjRHSBatchQuadraticModel, BatchSparseOp, batch_spmv!, batch_mapreduce!, batch_maximum!,
     _copy_sparse_structure!, _copy_sparse_values!, sparse_operator, operator_sparse_matrix
 
 include("utils.jl")
@@ -23,7 +24,20 @@ include("solver.jl")
 include("kernels.jl")
 include("linear_solver.jl")
 
-export LPData, LinearModel, MPCSolver, QPData, QuadraticModel, madipm, standard_form, update!
+include("batch/utils.jl")
+include("batch/views.jl")
+include("batch/madnlp/rhs.jl")
+include("batch/madnlp/callback.jl")
+include("batch/KKT/KKT.jl")
+include("batch/structure.jl")
+include("batch/madnlp/linear_solver.jl")
+include("batch/madnlp/kernels.jl")
+include("batch/madnlp/initialization.jl")
+include("batch/madnlp/nlpmodels.jl")
+include("batch/madipm/kernels.jl")
+include("batch/madipm/solver.jl")
+
+export LPData, LinearModel, MPCSolver, QPData, QuadraticModel, madipm, madipm_batch, standard_form, update!
 
 MadNLP.madsuite(::Val{:madipm}, args...; kwargs...) = madipm(args...; kwargs...)
 

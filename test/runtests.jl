@@ -266,6 +266,8 @@ end
     @test std.meta.y0[ws.con_start.row] ≈ qp.meta.y0
 end
 
+include("test_batch.jl")
+
 if get(ENV, "MADIPM_SKIP_MOI", "") == ""
     @testset "MathOptInterface" begin
         include("MOI_wrapper.jl")
