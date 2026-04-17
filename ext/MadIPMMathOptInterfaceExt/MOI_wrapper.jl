@@ -1,21 +1,30 @@
 
+Base.@kwdef struct OptimizerConfig{AT, KKT, LS, REG <: MadIPM.AbstractRegularization, STEP <: MadIPM.AbstractStepRule, ALG}
+    array_type::AT = Vector{Float64}
+    tol::Float64 = 1e-8
+    max_iter::Int = 3000
+    print_level::MadNLP.LogLevels = MadNLP.INFO
+    rethrow_error::Bool = false
+    kkt_system::KKT = MadNLP.SparseKKTSystem
+    linear_solver::LS = nothing
+    regularization::REG = MadIPM.FixedRegularization(1e-10, 1e-10)
+    step_rule::STEP = MadIPM.AdaptiveStep(0.99)
+    cudss_algorithm::ALG = nothing
+end
+
 mutable struct Optimizer <: MOI.AbstractOptimizer
-    options::Dict{String, Any}
+    config::OptimizerConfig
     silent::Bool
     solver::Union{Nothing, MadNLP.AbstractMadNLPSolver}
-    qp::Union{Nothing, QuadraticModel}
-    array_type::Type{<:AbstractVector{Float64}}
+    qp::Union{Nothing, MadIPM.QuadraticModel}
     stats::Union{
         Nothing,
         MadNLP.MadNLPExecutionStats{Float64, <:AbstractVector{Float64}},
     }
-    function Optimizer()
-        return new(Dict{String, Any}(), false, nothing, nothing, Vector{Float64}, nothing)
-    end
+    Optimizer() = new(OptimizerConfig(), false, nothing, nothing, nothing)
 end
 
 MOI.get(::Optimizer, ::MOI.SolverName) = "MadIPM"
-
 MOI.is_empty(optimizer::Optimizer) = isnothing(optimizer.solver) && isnothing(optimizer.qp)
 
 function MOI.empty!(optimizer::Optimizer)
@@ -25,21 +34,23 @@ function MOI.empty!(optimizer::Optimizer)
     return
 end
 
-###
-### MOI.RawOptimizerAttribute
-###
+function _override(config::OptimizerConfig, sym::Symbol, value)
+    return OptimizerConfig(;
+        (field === sym ? (field => value) : (field => getfield(config, field)) for field in fieldnames(OptimizerConfig))...
+    )
+end
 
 function MOI.set(optimizer::Optimizer, param::MOI.RawOptimizerAttribute, value)
-    if param.name == "array_type"
-        optimizer.array_type = value
-    else
-        optimizer.options[param.name] = value
-    end
+    sym = Symbol(param.name)
+    hasfield(OptimizerConfig, sym) || throw(ArgumentError("Unsupported MadIPM optimizer attribute `$(param.name)`"))
+    optimizer.config = _override(optimizer.config, sym, value)
     return
 end
 
 function MOI.get(optimizer::Optimizer, param::MOI.RawOptimizerAttribute)
-    return optimizer.options[param.name]
+    sym = Symbol(param.name)
+    hasfield(OptimizerConfig, sym) || throw(ArgumentError("Unsupported MadIPM optimizer attribute `$(param.name)`"))
+    return getfield(optimizer.config, sym)
 end
 
 ###
@@ -73,6 +84,7 @@ function MOI.get(
     model::Optimizer,
     ::MOI.ObjectiveSense,
 )
+    isnothing(model.qp) && return MOI.MIN_SENSE
     qp = model.qp
     return (qp.meta.minimize) ? MOI.MIN_SENSE : MOI.MAX_SENSE
 end
@@ -94,32 +106,64 @@ MOI.supports_constraint(::Optimizer, ::Type{VI}, ::Type{<:_SCALAR_SETS}) = true
 MOI.supports_constraint(::Optimizer, ::Type{SAF}, ::Type{<:_SCALAR_SETS}) = true
 
 function MOI.copy_to(dest::Optimizer, src::MOI.ModelLike)
-    dest.qp, index_map = qp_model(src)
-    if dest.array_type != Vector{Float64}
-        dest.qp = Adapt.adapt(dest.array_type, dest.qp)
+    dest.solver = nothing
+    dest.stats = nothing
+    dest.qp, index_map = BatchQuadraticModels.qp_model(src)
+    if dest.config.array_type != Vector{Float64}
+        dest.qp = Adapt.adapt(dest.config.array_type, dest.qp)
     end
     return index_map
 end
 
 function MOI.optimize!(model::Optimizer)
-    options = Dict{Symbol, Any}(
-        Symbol(key) => model.options[key] for key in keys(model.options) if key != "solver"
+    config = model.config
+    linear_solver = isnothing(config.linear_solver) ? MadNLP.default_sparse_solver(model.qp) : config.linear_solver
+    print_level = model.silent ? MadNLP.ERROR : config.print_level
+    model.solver = MadIPM.MPCSolver(
+        model.qp;
+        tol = config.tol,
+        max_iter = config.max_iter,
+        print_level = print_level,
+        rethrow_error = config.rethrow_error,
+        kkt_system = config.kkt_system,
+        linear_solver = linear_solver,
+        regularization = config.regularization,
+        step_rule = config.step_rule,
+        cudss_algorithm = config.cudss_algorithm,
     )
-    if model.silent
-        options[:print_level] = MadNLP.ERROR
-    else
-        options[:print_level] = MadNLP.INFO
-    end
-    model.solver = MadIPM.MPCSolver(model.qp; options...)
-    model.stats = MadIPM.solve!(model.solver)
+    model.stats = _host_stats(MadIPM.solve!(model.solver))
     return
 end
 
+function _host_stats(stats::MadNLP.MadNLPExecutionStats{T}) where {T}
+    solution = Vector{T}(stats.solution)
+    constraints = Vector{T}(stats.constraints)
+    multipliers = Vector{T}(stats.multipliers)
+    multipliers_L = Vector{T}(stats.multipliers_L)
+    multipliers_U = Vector{T}(stats.multipliers_U)
+    return MadNLP.MadNLPExecutionStats(
+        stats.options,
+        stats.status,
+        solution,
+        stats.objective,
+        constraints,
+        stats.dual_feas,
+        stats.primal_feas,
+        multipliers,
+        multipliers_L,
+        multipliers_U,
+        stats.iter,
+        stats.counters,
+    )
+end
+
 function MOI.get(optimizer::Optimizer, ::MOI.SolveTimeSec)
+    isnothing(optimizer.stats) && return 0.0
     return optimizer.stats.counters.total_time
 end
 
 function MOI.get(optimizer::Optimizer, ::MOI.RawStatusString)
+    isnothing(optimizer.stats) && return string(MOI.OPTIMIZE_NOT_CALLED)
     return string(optimizer.stats.status)
 end
 
@@ -130,36 +174,38 @@ end
 MOI.is_set_by_optimize(::RawStatus) = true
 
 function MOI.get(optimizer::Optimizer, attr::RawStatus)
+    isnothing(optimizer.stats) && error("Raw status is only available after optimize! is called.")
     return getfield(optimizer.stats, attr.name)
 end
 
-const TERMINATION_STATUS = Dict{MadNLP.Status,MOI.TerminationStatusCode}(
-    MadNLP.SOLVE_SUCCEEDED => MOI.OPTIMAL,
-    MadNLP.SOLVED_TO_ACCEPTABLE_LEVEL => MOI.ALMOST_OPTIMAL,
-    MadNLP.SEARCH_DIRECTION_BECOMES_TOO_SMALL => MOI.SLOW_PROGRESS,
-    MadNLP.DIVERGING_ITERATES => MOI.INFEASIBLE_OR_UNBOUNDED,
-    MadNLP.INFEASIBLE_PROBLEM_DETECTED => MOI.INFEASIBLE,
-    MadNLP.MAXIMUM_ITERATIONS_EXCEEDED => MOI.ITERATION_LIMIT,
-    MadNLP.MAXIMUM_WALLTIME_EXCEEDED => MOI.TIME_LIMIT,
-    MadNLP.INITIAL => MOI.OPTIMIZE_NOT_CALLED,
-    MadNLP.RESTORATION_FAILED => MOI.NUMERICAL_ERROR,
-    MadNLP.INVALID_NUMBER_DETECTED => MOI.INVALID_MODEL,
-    MadNLP.ERROR_IN_STEP_COMPUTATION => MOI.NUMERICAL_ERROR,
-    MadNLP.NOT_ENOUGH_DEGREES_OF_FREEDOM => MOI.INVALID_MODEL,
-    MadNLP.USER_REQUESTED_STOP => MOI.INTERRUPTED,
-    MadNLP.INTERNAL_ERROR => MOI.OTHER_ERROR,
-    MadNLP.INVALID_NUMBER_OBJECTIVE => MOI.INVALID_MODEL,
-    MadNLP.INVALID_NUMBER_GRADIENT => MOI.INVALID_MODEL,
-    MadNLP.INVALID_NUMBER_CONSTRAINTS => MOI.INVALID_MODEL,
-    MadNLP.INVALID_NUMBER_JACOBIAN => MOI.INVALID_MODEL,
-    MadNLP.INVALID_NUMBER_HESSIAN_LAGRANGIAN => MOI.INVALID_MODEL,
-)
+function _termination_status(status::MadNLP.Status)
+    status === MadNLP.SOLVE_SUCCEEDED && return MOI.OPTIMAL
+    status === MadNLP.SOLVED_TO_ACCEPTABLE_LEVEL && return MOI.ALMOST_OPTIMAL
+    status === MadNLP.SEARCH_DIRECTION_BECOMES_TOO_SMALL && return MOI.SLOW_PROGRESS
+    status === MadNLP.DIVERGING_ITERATES && return MOI.INFEASIBLE_OR_UNBOUNDED
+    status === MadNLP.INFEASIBLE_PROBLEM_DETECTED && return MOI.INFEASIBLE
+    status === MadNLP.MAXIMUM_ITERATIONS_EXCEEDED && return MOI.ITERATION_LIMIT
+    status === MadNLP.MAXIMUM_WALLTIME_EXCEEDED && return MOI.TIME_LIMIT
+    status === MadNLP.INITIAL && return MOI.OPTIMIZE_NOT_CALLED
+    status === MadNLP.RESTORATION_FAILED && return MOI.NUMERICAL_ERROR
+    status === MadNLP.INVALID_NUMBER_DETECTED && return MOI.INVALID_MODEL
+    status === MadNLP.ERROR_IN_STEP_COMPUTATION && return MOI.NUMERICAL_ERROR
+    status === MadNLP.NOT_ENOUGH_DEGREES_OF_FREEDOM && return MOI.INVALID_MODEL
+    status === MadNLP.USER_REQUESTED_STOP && return MOI.INTERRUPTED
+    status === MadNLP.INTERNAL_ERROR && return MOI.OTHER_ERROR
+    status === MadNLP.INVALID_NUMBER_OBJECTIVE && return MOI.INVALID_MODEL
+    status === MadNLP.INVALID_NUMBER_GRADIENT && return MOI.INVALID_MODEL
+    status === MadNLP.INVALID_NUMBER_CONSTRAINTS && return MOI.INVALID_MODEL
+    status === MadNLP.INVALID_NUMBER_JACOBIAN && return MOI.INVALID_MODEL
+    status === MadNLP.INVALID_NUMBER_HESSIAN_LAGRANGIAN && return MOI.INVALID_MODEL
+    return MOI.OTHER_ERROR
+end
 
 function MOI.get(optimizer::Optimizer, ::MOI.TerminationStatus)
     if isnothing(optimizer.stats)
         return MOI.OPTIMIZE_NOT_CALLED
     end
-    return TERMINATION_STATUS[optimizer.stats.status]
+    return _termination_status(optimizer.stats.status)
 end
 
 function MOI.get(optimizer::Optimizer, attr::MOI.ObjectiveValue)
@@ -167,27 +213,16 @@ function MOI.get(optimizer::Optimizer, attr::MOI.ObjectiveValue)
     return optimizer.stats.objective
 end
 
-function MOI.get(optimizer::Optimizer, attr::MOI.PrimalStatus)
-    if attr.result_index > MOI.get(optimizer, MOI.ResultCount())
-        return MOI.NO_SOLUTION
-    elseif MOI.get(optimizer, MOI.TerminationStatus()) == MOI.OPTIMAL
-        return MOI.FEASIBLE_POINT
-    elseif MOI.get(optimizer, MOI.TerminationStatus()) == MOI.INFEASIBLE
-        return MOI.INFEASIBLE_POINT
-    end
+function _result_status(optimizer::Optimizer, result_index)
+    result_index > MOI.get(optimizer, MOI.ResultCount()) && return MOI.NO_SOLUTION
+    term = MOI.get(optimizer, MOI.TerminationStatus())
+    term == MOI.OPTIMAL && return MOI.FEASIBLE_POINT
+    term == MOI.INFEASIBLE && return MOI.INFEASIBLE_POINT
     return MOI.NO_SOLUTION
 end
 
-function MOI.get(model::Optimizer, attr::MOI.DualStatus)
-    if attr.result_index > MOI.get(model, MOI.ResultCount())
-        return MOI.NO_SOLUTION
-    elseif MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
-        return MOI.FEASIBLE_POINT
-    elseif MOI.get(model, MOI.TerminationStatus()) == MOI.INFEASIBLE
-        return MOI.INFEASIBLE_POINT
-    end
-    return MOI.NO_SOLUTION
-end
+MOI.get(optimizer::Optimizer, attr::MOI.PrimalStatus) = _result_status(optimizer, attr.result_index)
+MOI.get(optimizer::Optimizer, attr::MOI.DualStatus) = _result_status(optimizer, attr.result_index)
 
 function MOI.get(optimizer::Optimizer, attr::MOI.VariablePrimal, vi::MOI.VariableIndex)
     MOI.check_result_index_bounds(optimizer, attr)
@@ -229,8 +264,6 @@ function MOI.get(
     return dual
 end
 
-_dual_multiplier(model::Optimizer) = model.qp.meta.minimize ? 1.0 : -1.0
-
 function MOI.get(
     model::Optimizer,
     attr::MOI.ConstraintDual,
@@ -240,4 +273,4 @@ function MOI.get(
     return -model.stats.multipliers[c.value+1]
 end
 
-MOI.get(optimizer::Optimizer, ::MOI.ResultCount) = 1
+MOI.get(optimizer::Optimizer, ::MOI.ResultCount) = isnothing(optimizer.stats) ? 0 : 1

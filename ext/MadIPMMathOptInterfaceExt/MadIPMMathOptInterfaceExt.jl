@@ -14,16 +14,22 @@
 module MadIPMMathOptInterfaceExt
 
 using Adapt
+using BatchQuadraticModels
 using MathOptInterface
-using SparseArrays
-import NLPModels
 import MadNLP
 import MadIPM
-using MadIPM: QuadraticModel
 
 const MOI = MathOptInterface
+const VI = MOI.VariableIndex
+const SAF = MOI.ScalarAffineFunction{Float64}
+const SQF = MOI.ScalarQuadraticFunction{Float64}
+const _SCALAR_SETS = Union{
+    MOI.EqualTo{Float64},
+    MOI.GreaterThan{Float64},
+    MOI.LessThan{Float64},
+    MOI.Interval{Float64},
+}
 
-include("parse_moi.jl")
 include("MOI_wrapper.jl")
 
 function __init__()
