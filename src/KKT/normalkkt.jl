@@ -140,7 +140,7 @@ end
 
 MadNLP.num_variables(kkt::NormalKKTSystem) = length(kkt.pr_diag)
 MadNLP.get_jacobian(kkt::NormalKKTSystem) = kkt.jac
-MadNLP.get_hessian(kkt::NormalKKTSystem) = Float64[]
+MadNLP.get_hessian(kkt::NormalKKTSystem{T, VT}) where {T, VT} = VT(undef, 0)
 
 function MadNLP.is_inertia_correct(kkt::NormalKKTSystem, num_pos, num_zero, num_neg)
     return (num_zero == 0) && (num_pos == kkt.m)
@@ -162,9 +162,7 @@ end
 function MadNLP.compress_jacobian!(kkt::NormalKKTSystem)
     n_slack = length(kkt.ind_ineq)
     kkt.A.V[end-n_slack+1:end] .= -1.0
-    # Transfer to the matrix A stored in CSC format
-    fill!(kkt.AT.nzval, 0.0)
-    for i in eachindex(kkt.A_csr_map)
+    @inbounds for i in eachindex(kkt.A_csr_map)
         kkt.AT.nzval[i] = kkt.A.V[kkt.A_csr_map[i]]
     end
     return

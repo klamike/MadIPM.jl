@@ -1,43 +1,23 @@
 # MadIPM.jl
 
-MadIPM.jl is a GPU-accelerated optimization solver for linear and quadratic programming.
-The solver implements the Mehrotra predictor-corrector method in pure Julia,
-and supports the solution of large-scale linear programs on the GPU using NVIDIA cuDSS.
+`MadIPM.jl` is a Mehrotra predictor-corrector interior-point solver for LPs and QPs, with CPU and NVIDIA GPU linear-solver paths.
+
+It accepts:
+
+- `BatchQuadraticModels.LinearModel` and `BatchQuadraticModels.QuadraticModel`
+- MOI / JuMP models through the `MathOptInterface` extension
 
 ## Installation
-
-MadIPM can be installed and tested through the Julia package manager:
 
 ```julia
 julia> ]
 pkg> add MadIPM
-pkg> test MadIPM
 ```
 
-## Basic usage
-
-### JuMP
-
-MadIPM supports JuMP models with an extension for `MathOptInterface.jl`.
-For instance, you can solve any LP formulated with JuMP by using:
+## Native model usage
 
 ```julia
-using JuMP
-using MadIPM
-
-c = rand(10)
-model = Model(MadIPM.Optimizer)
-@variable(model, 0 <= x[1:10], start=0.5)
-@constraint(model, sum(x) == 1.0)
-@objective(model, Min, c' * x)
-JuMP.optimize!(model)
-```
-
-### Native quadratic models
-
-MadIPM ships with a lightweight `QuadraticModel` constructor for LPs and QPs.
-
-```julia
+using SparseArrays
 using MadIPM
 
 data = QPData(
@@ -48,55 +28,40 @@ data = QPData(
     ucon = [1.0],
     lvar = [0.0, 0.0],
 )
+
 qp = QuadraticModel(data)
-results = madipm(qp)
+stats = madipm(qp)
 ```
 
-### Custom usage
-
-MadIPM takes as input any linear program (LP) or quadratic program (QP) represented as an `AbstractNLPModel`,
-following the specification in [NLPModels.jl](https://github.com/JuliaSmoothOptimizers/NLPModels.jl/).
-
-For any `qp <: AbstractNLPModel`, you can pass it to MadIPM either directly with `madipm(qp)`, or in two steps as follows:
+## JuMP / MOI usage
 
 ```julia
-solver = MPCSolver(qp)
-results = MadIPM.solve!(solver)
-```
-
-## Solving a LP with CUDA
-
-MadIPM supports GPU acceleration using NVIDIA cuDSS.
-It requires specifying your problem in a `QuadraticProblem` first.
-
-The data are moved to the GPU using:
-```julia
-using CUDA, KernelAbstractions, MadNLPGPU
-using CUDA.CUSPARSE
-using Adapt
+using JuMP
 using MadIPM
+
+model = Model(MadIPM.Optimizer)
+@variable(model, x[1:10] >= 0, start = 0.5)
+@constraint(model, sum(x) == 1.0)
+@objective(model, Min, sum(x))
+optimize!(model)
+```
+
+## CUDA usage
+
+Move a native model to CUDA in user code, then build the solver on the GPU-backed model:
+
+```julia
+using Adapt
+using CUDA
+using MadIPM
+using MadNLPGPU
 
 qp_gpu = adapt(CuArray, qp)
-```
-Then, you can pass the problem `qp_gpu` to MadIPM by switching
-the linear solver to NVIDIA cuDSS:
-```julia
-solver = MPCSolver(qp_gpu; linear_solver=MadNLPGPU.CUDSSSolver)
-results = MadIPM.solve!(solver)
-```
-As a result, all the solution happens on the GPU, with minimum data transfer
-between the host and the device.
-
-If you have a JuMP model, build a `QuadraticModel` in user code and move its data to CUDA before calling `MPCSolver`:
-```julia
-using MadIPM
-using CUDA, KernelAbstractions, MadNLPGPU
-using CUDA.CUSPARSE
+solver = MPCSolver(qp_gpu; linear_solver = MadNLPGPU.CUDSSSolver)
+stats = solve!(solver)
 ```
 
-## Citing MadIPM.jl
-
-If you use MadIPM.jl in your research, we would greatly appreciate your citing it.
+## Citation
 
 ```bibtex
 @article{MadIPM,
