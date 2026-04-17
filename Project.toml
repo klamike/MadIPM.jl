@@ -5,6 +5,7 @@ authors = ["François Pacaud <francoispacaud8@gmail.com>", "Alexis Montoison <am
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
 BatchQuadraticModels = "412afcf0-3ec6-4826-be17-8d792afa05a8"
 LDLFactorizations = "40e66cde-538c-5869-a4ad-c39174c6795b"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -28,6 +29,7 @@ BatchQuadraticModels = {path = "../BatchQuadraticModels.jl"}
 
 [compat]
 Adapt = "4"
+Atomix = "1.1"
 BatchQuadraticModels = "0.1"
 CUDA = "5.4.0"
 KernelAbstractions = "0.9"

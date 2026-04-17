@@ -1,8 +1,3 @@
-abstract type AbstractConicProblem end
-
-struct LinearProgram <: AbstractConicProblem end
-struct QuadraticProgram <: AbstractConicProblem end
-
 #=
     Barrier update
 =#
@@ -36,14 +31,14 @@ abstract type AbstractRegularization end
 
 struct NoRegularization <: AbstractRegularization end
 
-mutable struct FixedRegularization{T} <: AbstractRegularization
+struct FixedRegularization{T} <: AbstractRegularization
     delta_p::T
     delta_d::T
 end
 
-mutable struct AdaptiveRegularization{T} <: AbstractRegularization
-    delta_p::T
-    delta_d::T
+struct AdaptiveRegularization{T} <: AbstractRegularization
+    init_delta_p::T
+    init_delta_d::T
     delta_min::T
 end
 
@@ -66,16 +61,14 @@ end
     Options
 =#
 
-@kwdef mutable struct IPMOptions <: MadNLP.AbstractOptions
-    tol::Float64
-    kkt_system::Type
+Base.@kwdef struct IPMOptions <: MadNLP.AbstractOptions
+    tol::Float64 = 1e-8
+    kkt_system::Type = MadNLP.SparseKKTSystem
     linear_solver::Type
-    # Output options
     output_file::String = ""
     print_level::MadNLP.LogLevels = MadNLP.INFO
     file_print_level::MadNLP.LogLevels = MadNLP.INFO
     rethrow_error::Bool = false
-    # Termination options
     max_iter::Int = 3000
     max_wall_time::Float64 = 1e6
     divergence_tol::Float64 = 1e4
@@ -83,75 +76,52 @@ end
     kappa_d::Float64 = 1e-5
     fixed_variable_treatment::Type = kkt_system <: MadNLP.SparseCondensedKKTSystem ? MadNLP.RelaxBound : MadNLP.MakeParameter
     equality_treatment::Type = kkt_system <: MadNLP.SparseCondensedKKTSystem ? MadNLP.RelaxEquality : MadNLP.EnforceEquality
-    # initialization options
     scaling::Bool = true
     nlp_scaling_max_gradient::Float64 = 100.0
     bound_push::Float64 = 1e-2
     bound_fac::Float64 = 1e-2
     bound_relax_factor::Float64 = 1e-12
-    # Regularization
-    regularization::AbstractRegularization = FixedRegularization(1e-10, 1e-10)
-    # Step
-    step_rule::AbstractStepRule = AdaptiveStep(0.99)
-    # Barrier
-    barrier_update::AbstractBarrierUpdate = Mehrotra()
-    max_ncorr::Int = 0
     s_max::Float64 = 100.0
     mu_init::Float64 = 1e-1
     mu_min::Float64 = 1e-12
     mu_superlinear_decrease_power::Float64 = 1.5
     tau_min::Float64 = 0.99
-    # Linear solve
     tol_linear_solve::Float64 = 1e-8
     check_residual::Bool = false
 end
 
-# smart option presets
-function IPMOptions(
-    nlp::NLPModels.AbstractNLPModel{T};
-    kkt_system =  MadNLP.SparseKKTSystem,
-    linear_solver =  MadNLP.default_sparse_solver(nlp),
-    tol = 1e-8,
-) where T
-    return IPMOptions(
-        tol = tol,
-        kkt_system = kkt_system,
-        linear_solver = linear_solver,
-    )
-end
+IPMOptions(nlp::NLPModels.AbstractNLPModel; linear_solver = MadNLP.default_sparse_solver(nlp), kwargs...) =
+    IPMOptions(; linear_solver = linear_solver, kwargs...)
 
-function load_options(nlp; options...)
-    primary_opt, options = MadNLP._get_primary_options(options)
-
-    # Initiate interior-point options
-    opt_ipm = IPMOptions(nlp; primary_opt...)
-    linear_solver_options = MadNLP.set_options!(opt_ipm, options)
-    # Initiate linear-solver options
+function load_options(
+    nlp;
+    regularization::AbstractRegularization = FixedRegularization(1e-10, 1e-10),
+    step_rule::AbstractStepRule = AdaptiveStep(0.99),
+    barrier_update::AbstractBarrierUpdate = Mehrotra(),
+    cudss_algorithm = nothing,
+    kwargs...,
+)
+    opt_ipm = IPMOptions(nlp; kwargs...)
     opt_linear_solver = MadNLP.default_options(opt_ipm.linear_solver)
-    remaining_options = MadNLP.set_options!(opt_linear_solver, linear_solver_options)
-
-    # Initiate logger
-    logger = MadNLP.MadNLPLogger(
-        print_level=opt_ipm.print_level,
-        file_print_level=opt_ipm.file_print_level,
-        file = opt_ipm.output_file == "" ? nothing : open(opt_ipm.output_file,"w+"),
-    )
-    MadNLP.@trace(logger,"Logger is initialized.")
-
-    # Print remaning options (unsupported)
-    if !isempty(remaining_options)
-        MadNLP.print_ignored_options(logger, remaining_options)
+    if !isnothing(cudss_algorithm)
+        opt_linear_solver.cudss_algorithm = cudss_algorithm
     end
-    return (
-        interior_point=opt_ipm,
-        linear_solver=opt_linear_solver,
-        logger=logger,
-    )
-end
 
-function update_solution!(stats::MadNLP.MadNLPExecutionStats{T}, solver) where T
-    MadNLP.update!(stats,solver)
-    return
+    logger = MadNLP.MadNLPLogger(
+        print_level = opt_ipm.print_level,
+        file_print_level = opt_ipm.file_print_level,
+        file = opt_ipm.output_file == "" ? nothing : open(opt_ipm.output_file, "w+"),
+    )
+    MadNLP.@trace(logger, "Logger is initialized.")
+
+    return (
+        interior_point = opt_ipm,
+        linear_solver = opt_linear_solver,
+        logger = logger,
+        regularization = regularization,
+        step_rule = step_rule,
+        barrier_update = barrier_update,
+    )
 end
 
 function coo_to_csr(
@@ -311,42 +281,3 @@ _colptr(A::SparseArrays.SparseArrays.SparseMatrixCSC) = A.colptr
 _rowval(A::SparseArrays.SparseMatrixCSC) = A.rowval
 _nzval(A::SparseArrays.SparseMatrixCSC) = A.nzval
 
-#=
-    Model helpers
-=#
-
-"""
-    presolved_qp, flag = presolve_qp(qp::QuadraticModel)
-
-Return a conservative copy of `qp` together with `true`.
-"""
-function presolve_qp(qp::QuadraticModel)
-    data = QPData(
-        copy(qp.data.A),
-        copy(qp.data.c),
-        copy(qp.data.Q);
-        lcon = copy(qp.meta.lcon),
-        ucon = copy(qp.meta.ucon),
-        lvar = copy(qp.meta.lvar),
-        uvar = copy(qp.meta.uvar),
-        c0 = qp.data.c0,
-        _v = copy(qp.data._v),
-    )
-    new_qp = QuadraticModel(
-        data;
-        x0 = copy(qp.meta.x0),
-        y0 = copy(qp.meta.y0),
-        minimize = qp.meta.minimize,
-        name = qp.meta.name,
-    )
-    return new_qp, true
-end
-
-"""
-    standard_form_qp(qp::QuadraticModel)
-
-Return the standard-form BQM model used by the specialized MadIPM path.
-"""
-function standard_form_qp(qp::QuadraticModel)
-    return first(standard_form(qp))
-end

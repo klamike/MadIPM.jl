@@ -1,63 +1,62 @@
-mutable struct MPCSolver{
+mutable struct MPCProblem{
     T,
     VT <: AbstractVector{T},
     VI <: AbstractVector{Int},
     KKTSystem <: MadNLP.AbstractKKTSystem{T},
-    Model <: NLPModels.AbstractNLPModel{T,VT},
+    StdModel <: NLPModels.AbstractNLPModel{T,VT},
+    OrigModel <: NLPModels.AbstractNLPModel,
     CB <: MadNLP.AbstractCallback{T},
-} <: MadNLP.AbstractMadNLPSolver{T}
-    nlp::Model
-    class::AbstractConicProblem
+    WS,
+    OPT <: IPMOptions,
+    REG <: AbstractRegularization,
+    STEP <: AbstractStepRule,
+    BARR <: AbstractBarrierUpdate,
+}
+    original_nlp::OrigModel
+    nlp::StdModel
+    workspace::WS
     cb::CB
     kkt::KKTSystem
-
-    opt::IPMOptions
-    cnt::MadNLP.MadNLPCounters
+    opt::OPT
+    regularization::REG
+    step_rule::STEP
+    barrier_update::BARR
     logger::MadNLP.MadNLPLogger
-
-    n::Int # number of variables (after reformulation)
-    m::Int # number of cons
+    n::Int
+    m::Int
     nlb::Int
-    nub::Int
+    ind_lb::VI
+end
 
-    x::MadNLP.PrimalVector{T, VT, VI} # primal (after reformulation)
-    y::VT # dual
-    zl::MadNLP.PrimalVector{T, VT, VI} # dual (after reformulation)
-    zu::MadNLP.PrimalVector{T, VT, VI} # dual (after reformulation)
-    xl::MadNLP.PrimalVector{T, VT, VI} # primal lower bound (after reformulation)
-    xu::MadNLP.PrimalVector{T, VT, VI} # primal upper bound (after reformulation)
+mutable struct MPCState{
+    T,
+    VT <: AbstractVector{T},
+    VI <: AbstractVector{Int},
+} 
+    cnt::MadNLP.MadNLPCounters
+
+    x::MadNLP.PrimalVector{T, VT, VI}
+    y::VT
+    zl::MadNLP.PrimalVector{T, VT, VI}
 
     obj_val::T
     f::MadNLP.PrimalVector{T, VT, VI}
     c::VT
-
     jacl::VT
 
     d::MadNLP.UnreducedKKTVector{T, VT}
     p::MadNLP.UnreducedKKTVector{T, VT}
 
-    # Buffers
     _w1::MadNLP.UnreducedKKTVector{T, VT}
     _w2::MadNLP.UnreducedKKTVector{T, VT}
 
     correction_lb::VT
-    correction_ub::VT
     rhs::VT
     ind_ineq::VI
-    ind_fixed::VI
-    ind_lb::VI
-    ind_ub::VI
-    ind_llb::VI
-    ind_uub::VI
 
     x_lr::MadNLP.SubVector{T,VT,VI}
-    x_ur::MadNLP.SubVector{T,VT,VI}
-    xl_r::MadNLP.SubVector{T,VT,VI}
-    xu_r::MadNLP.SubVector{T,VT,VI}
     zl_r::MadNLP.SubVector{T,VT,VI}
-    zu_r::MadNLP.SubVector{T,VT,VI}
     dx_lr::MadNLP.SubVector{T,VT,VI}
-    dx_ur::MadNLP.SubVector{T,VT,VI}
 
     inf_pr::T
     inf_du::T
@@ -76,113 +75,113 @@ mutable struct MPCSolver{
     status::MadNLP.Status
 end
 
-function MPCSolver(nlp::NLPModels.AbstractNLPModel{T,VT}; kwargs...) where {T, VT}
-    options = load_options(nlp; kwargs...)
+mutable struct MPCSolver{T, P <: MPCProblem{T}, S <: MPCState{T}} <: MadNLP.AbstractMadNLPSolver{T}
+    problem::P
+    state::S
+end
+
+function MPCSolver(nlp::Union{LinearModel, QuadraticModel}; kwargs...)
+    std_nlp, workspace = standard_form(nlp)
+    options = load_options(std_nlp; kwargs...)
+    VT = typeof(NLPModels.get_x0(std_nlp))
 
     ipm_opt = options.interior_point
     logger = options.logger
-    @assert MadNLP.is_supported(ipm_opt.linear_solver, T)
-
+    regularization = options.regularization
+    step_rule = options.step_rule
+    barrier_update = options.barrier_update
     cnt = MadNLP.MadNLPCounters(start_time=time())
+
     cb = MadNLP.create_callback(
         MadNLP.SparseCallback,
-        nlp;
-        fixed_variable_treatment=ipm_opt.fixed_variable_treatment,
-        equality_treatment=ipm_opt.equality_treatment,
+        std_nlp;
+        fixed_variable_treatment = ipm_opt.fixed_variable_treatment,
+        equality_treatment = ipm_opt.equality_treatment,
     )
 
-    # generic options
-    MadNLP.@trace(logger,"Initializing variables.")
-
     ind_lb = cb.ind_lb
-    ind_ub = cb.ind_ub
-
-    ns = length(cb.ind_ineq)
+    empty_ind = similar(ind_lb, 0)
+    ns = 0
     nx = MadNLP.n_variables(cb)
-    n = nx+ns
-    m = NLPModels.get_ncon(nlp)
+    n = nx + ns
+    m = NLPModels.get_ncon(std_nlp)
     nlb = length(ind_lb)
-    nub = length(ind_ub)
 
-    MadNLP.@trace(logger,"Initializing KKT system.")
     kkt = MadNLP.create_kkt_system(
         ipm_opt.kkt_system,
         cb,
         ipm_opt.linear_solver;
-        opt_linear_solver=options.linear_solver,
+        opt_linear_solver = options.linear_solver,
     )
 
-    x = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
-    xl = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
-    xu = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
-    zl = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
-    zu = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
-    f = MadNLP.PrimalVector(VT, nx, ns, ind_lb, ind_ub)
+    x = MadNLP.PrimalVector(VT, nx, ns, ind_lb, empty_ind)
+    zl = MadNLP.PrimalVector(VT, nx, ns, ind_lb, empty_ind)
+    f = MadNLP.PrimalVector(VT, nx, ns, ind_lb, empty_ind)
 
-    d = MadNLP.UnreducedKKTVector(VT, n, m, nlb, nub, ind_lb, ind_ub)
-    p = MadNLP.UnreducedKKTVector(VT, n, m, nlb, nub, ind_lb, ind_ub)
-    _w1 = MadNLP.UnreducedKKTVector(VT, n, m, nlb, nub, ind_lb, ind_ub)
-    _w2 = MadNLP.UnreducedKKTVector(VT, n, m, nlb, nub, ind_lb, ind_ub)
+    d = MadNLP.UnreducedKKTVector(VT, n, m, nlb, 0, ind_lb, empty_ind)
+    p = MadNLP.UnreducedKKTVector(VT, n, m, nlb, 0, ind_lb, empty_ind)
+    _w1 = MadNLP.UnreducedKKTVector(VT, n, m, nlb, 0, ind_lb, empty_ind)
+    _w2 = MadNLP.UnreducedKKTVector(VT, n, m, nlb, 0, ind_lb, empty_ind)
 
-    # Buffers
     correction_lb = VT(undef, nlb)
-    correction_ub = VT(undef, nub)
-    jacl = VT(undef,n)
-    c_trial = VT(undef, m)
+    jacl = VT(undef, n)
     y = VT(undef, m)
     c = VT(undef, m)
     rhs = VT(undef, m)
 
-    x_lr = view(full(x), cb.ind_lb)
-    x_ur = view(full(x), cb.ind_ub)
-    xl_r = view(full(xl), cb.ind_lb)
-    xu_r = view(full(xu), cb.ind_ub)
-    zl_r = view(full(zl), cb.ind_lb)
-    zu_r = view(full(zu), cb.ind_ub)
-    dx_lr = view(d.xp, cb.ind_lb)
-    dx_ur = view(d.xp, cb.ind_ub)
+    x_lr = view(full(x), ind_lb)
+    zl_r = view(full(zl), ind_lb)
+    dx_lr = view(d.xp, ind_lb)
 
     cnt.init_time = time() - cnt.start_time
-
-    nnzh = MadNLP.get_nnzh(nlp)
-    # check if the problem is a LP or a QP
-    class = iszero(nnzh) ? LinearProgram() : QuadraticProgram()
-
-    return MPCSolver(
-        nlp, class, cb, kkt,
-        ipm_opt, cnt, options.logger,
-        n, m, nlb, nub,
-        x, y, zl, zu, xl, xu,
-        zero(T), f, c,
-        jacl,
-        d, p,
-        _w1, _w2,
-        correction_lb, correction_ub,
-        rhs,
-        cb.ind_ineq, cb.ind_fixed, cb.ind_lb, cb.ind_ub,
-        cb.ind_llb, cb.ind_uub,
-        x_lr, x_ur, xl_r, xu_r, zl_r, zu_r, dx_lr, dx_ur,
-        zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), typemax(T), zero(T),
+    problem = MPCProblem(
+        nlp,
+        std_nlp,
+        workspace,
+        cb,
+        kkt,
+        ipm_opt,
+        regularization,
+        step_rule,
+        barrier_update,
+        logger,
+        n,
+        m,
+        nlb,
+        ind_lb,
+    )
+    T = eltype(y)
+    z = zero(T)
+    state = MPCState(
+        cnt,
+        x, y, zl,
+        z,
+        f, c, jacl,
+        d, p, _w1, _w2, correction_lb, rhs, empty_ind,
+        x_lr, zl_r, dx_lr,
+        z, z, z, z, z,
+        z,
+        z, z, z, z,
+        typemax(T),
+        z,
         MadNLP.INITIAL,
     )
+    return MPCSolver(problem, state)
 end
 
-function MadNLP.print_iter(solver::MPCSolver; options...)
-    obj_scale = solver.cb.obj_scale[]
-    mod(solver.cnt.k,10)==0&& MadNLP.@info(solver.logger,@sprintf(
-        "iter    objective    inf_pr   inf_du lg(mu)  ||d||  lg(rg) alpha_du alpha_pr"))
-    inf_du = solver.inf_du
-    inf_pr = solver.inf_pr
-    mu = log10(solver.mu)
-    MadNLP.@info(solver.logger,Printf.@sprintf(
-        "%4i%s% 10.7e %6.2e %6.2e %5.1f %6.2e %s %6.2e %6.2e",
-        solver.cnt.k,
-        " ",
-        solver.obj_val/obj_scale,
-        inf_pr, inf_du, mu,
-        solver.cnt.k == 0 ? 0. : norm(MadNLP.primal(solver.d),Inf),
-        solver.del_w == 0 ? "   - " : @sprintf("%5.1f",log(10,solver.del_w)),
-        solver.alpha_d,solver.alpha_p))
-    return
-end
+"""
+    update!(solver::MPCSolver; c, c0, A, Q, lvar, uvar, lcon, ucon, x0, y0)
 
+Mutate the original model held by `solver` with any provided fields (all in
+the original variable/constraint space) and propagate the minimal set of
+updates to the standard-form model. Call `MadIPM.solve!(solver)` afterwards
+to solve the updated problem without rebuilding.
+
+Sparsity patterns and bound kinds (finite ↔ infinite, `l == u`) must be
+unchanged; for structural changes construct a new `MPCSolver`.
+"""
+function update!(solver::MPCSolver; kwargs...)
+    problem = solver.problem
+    update_standard_form!(problem.original_nlp, problem.nlp, problem.workspace; kwargs...)
+    return solver
+end
