@@ -1,9 +1,17 @@
 [deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+BatchQuadraticModels = "412afcf0-3ec6-4826-be17-8d792afa05a8"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 MadNLP = "2621e9c9-9eb4-46b1-8089-e8c72242dfb6"
+MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
 MadNLPTests = "b52a2a03-04ab-4a5f-9698-6a2deff93217"
 MadIPM = "4406d55e-1099-4ca6-ac6a-6cf051b10024"
 MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 NLPModels = "a4795742-8479-5a88-8948-cc11e1c8c1a6"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+BatchQuadraticModels = {path = "../../BatchQuadraticModels.jl"}
+MadIPM = {path = ".."}
