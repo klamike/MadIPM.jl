@@ -24,12 +24,13 @@ end
 # ---------- batch ----------
 
 function _set_aug_diagonal_reg_unmasked!(kkt, solver::AbstractBatchMPCSolver)
-    kkt.reg .= solver.del_w
-    du_diag(kkt) .= solver.del_c
-    kkt.l_diag .= lower(solver.xl) .- lower(solver.x)
-    kkt.u_diag .= upper(solver.x) .- upper(solver.xu)
-    kkt.l_lower .= lower(solver.zl)
-    kkt.u_lower .= upper(solver.zu)
+    state = solver.state
+    kkt.reg .= state.del_w
+    du_diag(kkt) .= state.del_c
+    kkt.l_diag .= lower(state.xl) .- lower(state.x)
+    kkt.u_diag .= upper(state.x) .- upper(state.xu)
+    kkt.l_lower .= lower(state.zl)
+    kkt.u_lower .= upper(state.zu)
     pr_diag(kkt) .= kkt.reg
     pr_diag_lb = view(pr_diag(kkt), _get_ind_lb(solver), :)
     pr_diag_ub = view(pr_diag(kkt), _get_ind_ub(solver), :)
@@ -39,17 +40,18 @@ function _set_aug_diagonal_reg_unmasked!(kkt, solver::AbstractBatchMPCSolver)
 end
 
 function _set_aug_diagonal_reg_masked!(kkt, solver::AbstractBatchMPCSolver)
-    xl_r = lower(solver.xl)
-    x_lr = lower(solver.x)
-    zl_r = lower(solver.zl)
-    xu_r = upper(solver.xu)
-    x_ur = upper(solver.x)
-    zu_r = upper(solver.zu)
-    mask = solver.workspace.active_mask
+    state = solver.state
+    xl_r = lower(state.xl)
+    x_lr = lower(state.x)
+    zl_r = lower(state.zl)
+    xu_r = upper(state.xu)
+    x_ur = upper(state.x)
+    zu_r = upper(state.zu)
+    mask = state.workspace.active_mask
     _du = du_diag(kkt)
     _pr = pr_diag(kkt)
-    @. kkt.reg = ifelse(mask == 1, solver.del_w, kkt.reg)
-    @. _du = ifelse(mask == 1, solver.del_c, _du)
+    @. kkt.reg = ifelse(mask == 1, state.del_w, kkt.reg)
+    @. _du = ifelse(mask == 1, state.del_c, _du)
     @. kkt.l_diag = ifelse(mask == 1, xl_r - x_lr, kkt.l_diag)
     @. kkt.u_diag = ifelse(mask == 1, x_ur - xu_r, kkt.u_diag)
     @. kkt.l_lower = ifelse(mask == 1, zl_r, kkt.l_lower)
@@ -63,7 +65,7 @@ function _set_aug_diagonal_reg_masked!(kkt, solver::AbstractBatchMPCSolver)
 end
 
 function set_aug_diagonal_reg!(kkt, solver::AbstractBatchMPCSolver)
-    if is_identity_view(active_view(solver.batch_views))
+    if is_identity_view(active_view(solver.problem.batch_views))
         _set_aug_diagonal_reg_unmasked!(kkt, solver)
     else
         _set_aug_diagonal_reg_masked!(kkt, solver)

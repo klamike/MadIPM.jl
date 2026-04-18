@@ -61,16 +61,18 @@ end
 # ---------- batch ----------
 
 function solve!(batch_solver::AbstractBatchMPCSolver{T, MT, VT}) where {T, MT, VT}
-    ws = batch_solver.workspace
-    bcb = batch_solver.bcb
-    bs = batch_solver.batch_size
+    problem = batch_solver.problem
+    state = batch_solver.state
+    ws = state.workspace
+    bcb = problem.bcb
+    bs = problem.batch_size
 
     nvar_nlp = bcb.nlp.meta.nvar
     ncon = bcb.ncon
     stats = BatchExecutionStats(MT, VT, nvar_nlp, ncon, bs)
 
     try
-        MadNLP.@notice(batch_solver.logger, "MadIPM batch solve ($bs problems)\n")
+        MadNLP.@notice(problem.logger, "MadIPM batch solve ($bs problems)\n")
         initialize!(batch_solver)
         mpc!(batch_solver)
     catch e
@@ -79,9 +81,9 @@ function solve!(batch_solver::AbstractBatchMPCSolver{T, MT, VT}) where {T, MT, V
                 ws.status[i] = MadNLP.INTERNAL_ERROR
             end
         end
-        batch_solver.opt.rethrow_error && rethrow(e)
+        problem.opt.rethrow_error && rethrow(e)
     finally
-        bcnt = batch_solver.batch_cnt
+        bcnt = state.batch_cnt
         t_end = time()
         bcnt.total_time .= t_end .- bcnt.start_time[]
         update_solution!(stats, batch_solver)
@@ -91,7 +93,7 @@ function solve!(batch_solver::AbstractBatchMPCSolver{T, MT, VT}) where {T, MT, V
             status_counts[s] = get(status_counts, s, 0) + 1
         end
         for (s, cnt) in status_counts
-            MadNLP.@notice(batch_solver.logger, "$(MadNLP.get_status_output(s, batch_solver.opt)): $cnt/$bs")
+            MadNLP.@notice(problem.logger, "$(MadNLP.get_status_output(s, problem.opt)): $cnt/$bs")
         end
     end
 
@@ -151,12 +153,14 @@ function IPMOptions(
 end
 
 function MadNLP.print_iter(batch_solver::AbstractBatchMPCSolver)
-    logger = batch_solver.logger
+    problem = batch_solver.problem
+    state = batch_solver.state
+    logger = problem.logger
     MadNLP.get_level(logger) > MadNLP.INFO && return
-    ws = batch_solver.workspace
-    bcnt = batch_solver.batch_cnt
+    ws = state.workspace
+    bcnt = state.batch_cnt
     na = active_batch_size(batch_solver)
-    bs = batch_solver.batch_size
+    bs = problem.batch_size
     k = maximum(bcnt.k)
 
     active_str = "$na/$bs"

@@ -37,8 +37,9 @@ end
 # ---------- batch ----------
 
 function get_complementarity_measure!(solver::AbstractBatchMPCSolver)
-    ws = solver.workspace
-    nlb, nub = solver.d.nlb, solver.d.nub
+    state = solver.state
+    ws = state.workspace
+    nlb, nub = state.d.nlb, state.d.nub
     T = eltype(ws.mu_curr)
 
     if nlb + nub == 0
@@ -46,12 +47,12 @@ function get_complementarity_measure!(solver::AbstractBatchMPCSolver)
         return ws.mu_curr
     end
 
-    xl_r = lower(solver.xl)
-    x_lr = lower(solver.x)
-    zl_r = lower(solver.zl)
-    xu_r = upper(solver.xu)
-    x_ur = upper(solver.x)
-    zu_r = upper(solver.zu)
+    xl_r = lower(state.xl)
+    x_lr = lower(state.x)
+    zl_r = lower(state.zl)
+    xu_r = upper(state.xu)
+    x_ur = upper(state.x)
+    zu_r = upper(state.zu)
 
     batch_mapreduce!((x, xl, z) -> (x - xl) * z, +, zero(T), ws.sum_lb, x_lr, xl_r, zl_r)
     batch_mapreduce!((xu, x, z) -> (xu - x) * z, +, zero(T), ws.sum_ub, xu_r, x_ur, zu_r)
@@ -60,8 +61,9 @@ function get_complementarity_measure!(solver::AbstractBatchMPCSolver)
 end
 
 function get_affine_complementarity_measure!(solver::AbstractBatchMPCSolver, alpha_p, alpha_d)
-    ws = solver.workspace
-    nlb, nub = solver.d.nlb, solver.d.nub
+    state = solver.state
+    ws = state.workspace
+    nlb, nub = state.d.nlb, state.d.nub
     T = eltype(ws.mu_affine)
 
     if nlb + nub == 0
@@ -69,16 +71,16 @@ function get_affine_complementarity_measure!(solver::AbstractBatchMPCSolver, alp
         return ws.mu_affine
     end
 
-    xl_r = lower(solver.xl)
-    x_lr = lower(solver.x)
-    zl_r = lower(solver.zl)
-    xu_r = upper(solver.xu)
-    x_ur = upper(solver.x)
-    zu_r = upper(solver.zu)
-    dx_lr = xp_lr(solver.d)
-    dx_ur = xp_ur(solver.d)
-    dzlb = MadNLP.dual_lb(solver.d)
-    dzub = MadNLP.dual_ub(solver.d)
+    xl_r = lower(state.xl)
+    x_lr = lower(state.x)
+    zl_r = lower(state.zl)
+    xu_r = upper(state.xu)
+    x_ur = upper(state.x)
+    zu_r = upper(state.zu)
+    dx_lr = xp_lr(state.d)
+    dx_ur = xp_ur(state.d)
+    dzlb = MadNLP.dual_lb(state.d)
+    dzub = MadNLP.dual_ub(state.d)
 
     _affine_compl_lb!(ws.sum_lb, x_lr, xl_r, zl_r, dx_lr, dzlb, alpha_p, alpha_d)
     _affine_compl_ub!(ws.sum_ub, xu_r, x_ur, zu_r, dx_ur, dzub, alpha_p, alpha_d)
@@ -113,18 +115,20 @@ function _affine_compl_ub!(out, xu, x, z, dx, dz, αp, αd)
 end
 
 function update_barrier!(::Mehrotra, solver::AbstractBatchMPCSolver, mu_affine)
-    ws = solver.workspace
+    state = solver.state
+    ws = state.workspace
     T = eltype(ws.mu_curr)
 
-    has_inequalities = (solver.d.nlb + solver.d.nub) > 0
+    has_inequalities = (state.d.nlb + state.d.nub) > 0
 
     get_complementarity_measure!(solver)
 
+    mu_min = solver.problem.opt.mu_min
     if has_inequalities
         @. ws.mu_batch = clamp((ws.mu_affine / ws.mu_curr) ^ 3, T(1e-6), T(10.0))
-        @. ws.mu_batch = max(solver.opt.mu_min, ws.mu_batch * ws.mu_curr)
+        @. ws.mu_batch = max(mu_min, ws.mu_batch * ws.mu_curr)
     else
-        @. ws.mu_batch = max(solver.opt.mu_min, ws.mu_curr)
+        @. ws.mu_batch = max(mu_min, ws.mu_curr)
     end
     return
 end

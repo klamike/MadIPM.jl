@@ -172,7 +172,7 @@ function MadNLP.reduce_rhs!(bkkt::SparseUniformBatchKKTSystem, d::BatchUnreduced
 end
 
 function MadNLP.finish_aug_solve!(bkkt::SparseUniformBatchKKTSystem, batch_solver::AbstractBatchMPCSolver)
-    d = batch_solver.d
+    d = batch_solver.state.d
     lb_off = d.n + d.m
     _finish_aug_solve_batch!(d.values, d.ind_lb, lb_off, bkkt.l_lower, bkkt.l_diag,
                                        d.ind_ub, lb_off + d.nlb, bkkt.u_lower, bkkt.u_diag)
@@ -180,7 +180,7 @@ function MadNLP.finish_aug_solve!(bkkt::SparseUniformBatchKKTSystem, batch_solve
 end
 
 function MadNLP.solve_kkt!(bkkt::SparseUniformBatchKKTSystem, batch_solver::AbstractBatchMPCSolver)
-    d = batch_solver.d
+    d = batch_solver.state.d
 
     MadNLP.reduce_rhs!(bkkt, d)
 
@@ -217,14 +217,15 @@ function MadNLP.eval_jac_wrapper!(
     batch_solver::AbstractBatchMPCSolver,
     bkkt::SparseUniformBatchKKTSystem,
 )
-    bcb = batch_solver.bcb
-    ws = batch_solver.workspace
+    state = batch_solver.state
+    bcb = batch_solver.problem.bcb
+    ws = state.workspace
     nzVals = bkkt.nzVals
     n_tot = bkkt.n_tot
     nnzj = bcb.nnzj
     n_slack = length(bcb.ind_ineq)
 
-    MadNLP.unpack_x!(ws.bx, bcb, batch_solver.x)
+    MadNLP.unpack_x!(ws.bx, bcb, state.x)
     jac_free = MadNLP._eval_jac_wrapper!(bcb, ws.bx, bcb.jac_buffer)
 
     jac_offset = n_tot + bkkt.nnzh
@@ -240,18 +241,20 @@ function MadNLP.eval_lag_hess_wrapper!(
     batch_solver::AbstractBatchMPCSolver,
     bkkt::SparseUniformBatchKKTSystem,
 )
-    bcb = batch_solver.bcb
-    ws = batch_solver.workspace
+    problem = batch_solver.problem
+    state = batch_solver.state
+    bcb = problem.bcb
+    ws = state.workspace
     nzVals = bkkt.nzVals
     n_tot = bkkt.n_tot
     nnzh = bkkt.nnzh
 
     if nnzh > 0
         hess = view(nzVals, n_tot+1:n_tot+nnzh, :)
-        MadNLP.unpack_x!(ws.bx, bcb, batch_solver.x)
-        bf_mat = reshape(ws.bf, 1, batch_solver.batch_size)
+        MadNLP.unpack_x!(ws.bx, bcb, state.x)
+        bf_mat = reshape(ws.bf, 1, problem.batch_size)
         @. bf_mat = bcb.obj_sign * bcb.obj_scale
-        MadNLP._eval_lag_hess_wrapper!(bcb, ws.bx, MadNLP.full(batch_solver.y), ws.bv, hess; obj_weight=ws.bf)
+        MadNLP._eval_lag_hess_wrapper!(bcb, ws.bx, MadNLP.full(state.y), ws.bv, hess; obj_weight=ws.bf)
     end
     return
 end

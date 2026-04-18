@@ -22,8 +22,9 @@ end
 # ---------- batch ----------
 
 function _bump_failed_regularization!(batch_solver::AbstractBatchMPCSolver{T}, failed_locals, nfailed::Int) where T
-    factor_view = active_view(batch_solver.batch_views)
-    ws = batch_solver.workspace
+    state = batch_solver.state
+    factor_view = active_view(batch_solver.problem.batch_views)
+    ws = state.workspace
     # build root-level mask from local failed idx
     fill!(ws.active_mask_cpu, zero(T))
     @inbounds for k in 1:nfailed
@@ -32,8 +33,8 @@ function _bump_failed_regularization!(batch_solver::AbstractBatchMPCSolver{T}, f
     end
     copyto!(ws.active_mask, ws.active_mask_cpu)
     mask = ws.active_mask
-    @. batch_solver.del_w = ifelse(mask == one(T), T(100) * batch_solver.del_w, batch_solver.del_w)
-    @. batch_solver.del_c = ifelse(mask == one(T), T(100) * batch_solver.del_c, batch_solver.del_c)
+    @. state.del_w = ifelse(mask == one(T), T(100) * state.del_w, state.del_w)
+    @. state.del_c = ifelse(mask == one(T), T(100) * state.del_c, state.del_c)
     # restore active mask
     # this is required to not throw away any successful factorization that we need later
     _update_active_mask!(batch_solver)
@@ -41,18 +42,18 @@ function _bump_failed_regularization!(batch_solver::AbstractBatchMPCSolver{T}, f
 end
 
 function factorize_system!(batch_solver::AbstractBatchMPCSolver)
-    ws = batch_solver.workspace
-    batch_views = batch_solver.batch_views
-    update_regularization!(batch_solver, batch_solver.regularization)
+    problem = batch_solver.problem
+    batch_views = problem.batch_views
+    update_regularization!(batch_solver, problem.regularization)
     max_trials = 3
     factor_view = active_view(batch_views)
     failed_locals = batch_views.selected_local_buffer
 
     for _ in 1:max_trials
-        set_aug_diagonal_reg!(batch_solver.kkt, batch_solver)
+        set_aug_diagonal_reg!(problem.kkt, batch_solver)
         MadNLP.factorize_wrapper!(batch_solver)
         nfailed = is_factorized!(
-            failed_locals, batch_solver.kkt.batch_solver, factor_view,
+            failed_locals, problem.kkt.batch_solver, factor_view,
         )
         nfailed == 0 && break
         _bump_failed_regularization!(batch_solver, failed_locals, nfailed)

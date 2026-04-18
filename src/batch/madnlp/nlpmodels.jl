@@ -155,9 +155,10 @@ function MadNLP._eval_lag_hess_wrapper!(
 end
 
 function MadNLP.eval_f_wrapper(solver::AbstractBatchMPCSolver, bx::AbstractMatrix)
-    ws = solver.workspace
-    bcb = solver.bcb
-    bcnt = solver.batch_cnt
+    state = solver.state
+    ws = state.workspace
+    bcb = solver.problem.bcb
+    bcnt = state.batch_cnt
 
     t = @elapsed begin
         MadNLP._eval_f_wrapper(bcb, bx, ws.bf)
@@ -170,18 +171,19 @@ function MadNLP.eval_f_wrapper(solver::AbstractBatchMPCSolver, bx::AbstractMatri
 end
 
 function MadNLP.eval_cons_wrapper!(solver::AbstractBatchMPCSolver, bx::AbstractMatrix)
-    ws = solver.workspace
-    bcb = solver.bcb
-    bcnt = solver.batch_cnt
+    state = solver.state
+    ws = state.workspace
+    bcb = solver.problem.bcb
+    bcnt = state.batch_cnt
     ind_ineq = bcb.ind_ineq
     ns = length(ind_ineq)
 
     t = @elapsed begin
-        MadNLP._eval_cons_wrapper!(bcb, bx, MadNLP.full(solver.c))
+        MadNLP._eval_cons_wrapper!(bcb, bx, MadNLP.full(state.c))
         if ns > 0
-            view(MadNLP.full(solver.c), ind_ineq, :) .-= MadNLP.slack(solver.x)
+            view(MadNLP.full(state.c), ind_ineq, :) .-= MadNLP.slack(state.x)
         end
-        MadNLP.full(solver.c) .-= MadNLP.full(solver.rhs)
+        MadNLP.full(state.c) .-= MadNLP.full(state.rhs)
     end
     bcnt.eval_function_time[] += t
     bcnt.con_cnt[] += 1
@@ -189,16 +191,17 @@ function MadNLP.eval_cons_wrapper!(solver::AbstractBatchMPCSolver, bx::AbstractM
 end
 
 function MadNLP.eval_grad_f_wrapper!(solver::AbstractBatchMPCSolver, bx::AbstractMatrix)
-    ws = solver.workspace
-    bcb = solver.bcb
-    bcnt = solver.batch_cnt
+    state = solver.state
+    ws = state.workspace
+    bcb = solver.problem.bcb
+    bcnt = state.batch_cnt
     nvar = bcb.nvar
 
     t = @elapsed begin
         MadNLP._eval_grad_f_wrapper!(bcb, bx, ws.bg)
         BG = view(ws.bg, 1:nvar, :)
         BG .*= bcb.obj_sign
-        copyto!(MadNLP.variable(solver.f), BG)
+        copyto!(MadNLP.variable(state.f), BG)
     end
     bcnt.eval_function_time[] += t
     bcnt.obj_grad_cnt[] += 1

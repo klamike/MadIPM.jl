@@ -165,12 +165,13 @@ function MadNLP.eval_jac_wrapper!(
     batch_solver::AbstractBatchMPCSolver,
     bkkt::NormalUniformBatchKKTSystem,
 )
-    bcb = batch_solver.bcb
-    ws = batch_solver.workspace
+    state = batch_solver.state
+    bcb = batch_solver.problem.bcb
+    ws = state.workspace
     nnzj = bcb.nnzj
     n_slack = length(bcb.ind_ineq)
 
-    MadNLP.unpack_x!(ws.bx, bcb, batch_solver.x)
+    MadNLP.unpack_x!(ws.bx, bcb, state.x)
     jac_free = MadNLP._eval_jac_wrapper!(bcb, ws.bx, bcb.jac_buffer)
     view(bkkt.A_vals, 1:nnzj, :) .= jac_free
     if n_slack > 0
@@ -268,7 +269,7 @@ end
 
 # Per-column solve of the reduced dual system, then reconstruct primal.
 function MadNLP.solve_kkt!(bkkt::NormalUniformBatchKKTSystem{T}, batch_solver::AbstractBatchMPCSolver) where {T}
-    d = batch_solver.d
+    d = batch_solver.state.d
     # Reduce lb/ub rows of the unreduced vector into the primal block.
     lb_off = d.n + d.m
     _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag, d.ind_ub, lb_off + d.nlb, bkkt.u_diag)
@@ -335,7 +336,7 @@ function MadNLP.reduce_rhs!(bkkt::NormalUniformBatchKKTSystem, d::BatchUnreduced
 end
 
 function MadNLP.finish_aug_solve!(bkkt::NormalUniformBatchKKTSystem, batch_solver::AbstractBatchMPCSolver)
-    d = batch_solver.d
+    d = batch_solver.state.d
     lb_off = d.n + d.m
     _finish_aug_solve_batch!(d.values, d.ind_lb, lb_off, bkkt.l_lower, bkkt.l_diag, d.ind_ub, lb_off + d.nlb, bkkt.u_lower, bkkt.u_diag)
     return

@@ -60,10 +60,10 @@ end
 # ---------- batch ----------
 
 function set_tau!(rule::ConservativeStep, batch_solver::AbstractBatchMPCSolver)
-    fill!(batch_solver.workspace.tau, rule.tau)
+    fill!(batch_solver.state.workspace.tau, rule.tau)
 end
 function set_tau!(rule::AdaptiveStep, batch_solver::AbstractBatchMPCSolver)
-    ws = batch_solver.workspace
+    ws = batch_solver.state.workspace
     ws.tau .= max.(1 .- ws.mu_batch, rule.tau_min)
 end
 function update_step!(rule::Union{ConservativeStep, AdaptiveStep}, batch_solver::AbstractBatchMPCSolver)
@@ -73,9 +73,10 @@ function update_step!(rule::Union{ConservativeStep, AdaptiveStep}, batch_solver:
 end
 
 function get_fraction_to_boundary_step!(batch_solver::AbstractBatchMPCSolver)
-    ws = batch_solver.workspace
-    x, xl, xu = batch_solver.x, batch_solver.xl, batch_solver.xu
-    zl, zu, d = batch_solver.zl, batch_solver.zu, batch_solver.d
+    state = batch_solver.state
+    ws = state.workspace
+    x, xl, xu = state.x, state.xl, state.xu
+    zl, zu, d = state.zl, state.zu, state.d
     nlb, nub = d.nlb, d.nub
     T = eltype(ws.alpha_p)
 
@@ -247,9 +248,10 @@ end
 end
 
 function update_step!(rule::MehrotraAdaptiveStep, batch_solver::AbstractBatchMPCSolver)
-    ws = batch_solver.workspace
-    x, xl, xu = batch_solver.x, batch_solver.xl, batch_solver.xu
-    zl, zu, d = batch_solver.zl, batch_solver.zu, batch_solver.d
+    state = batch_solver.state
+    ws = state.workspace
+    x, xl, xu = state.x, state.xl, state.xu
+    zl, zu, d = state.zl, state.zu, state.d
     nlb, nub = d.nlb, d.nub
     T = eltype(ws.alpha_p)
     gamma_f = T(rule.gamma_f)
@@ -264,7 +266,7 @@ function update_step!(rule::MehrotraAdaptiveStep, batch_solver::AbstractBatchMPC
 
     dlb_off = d.n + d.m
     dub_off = d.n + d.m + d.nlb
-    bs = batch_solver.batch_size
+    bs = batch_solver.problem.batch_size
 
     _mehrotra_step!(
         ws.alpha_p, ws.alpha_d, mu_full, gamma_f,

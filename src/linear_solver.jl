@@ -41,18 +41,20 @@ function solve_system!(
     batch_solver::AbstractBatchMPCSolver{T},
     p::BatchUnreducedKKTVector{T},
 ) where T
+    problem = batch_solver.problem
+    state = batch_solver.state
     copyto!(MadNLP.full(d), MadNLP.full(p))
-    MadNLP.solve_kkt!(batch_solver.kkt, batch_solver)
+    MadNLP.solve_kkt!(problem.kkt, batch_solver)
 
-    w = batch_solver._w1
+    w = state._w1
     copyto!(MadNLP.full(w), MadNLP.full(p))
-    mul!(w, batch_solver.kkt, d, -one(T), one(T))
+    mul!(w, problem.kkt, d, -one(T), one(T))
 
-    ws = batch_solver.workspace
+    ws = state.workspace
     MadNLP.full(w) .*= ws.active_mask
     MadNLP.full(p) .*= ws.active_mask
 
-    opt = batch_solver.opt
+    opt = problem.opt
     check_res = opt.check_residual
     tol_ls = T(opt.tol_linear_solve)
     _fw = MadNLP.full(w)
@@ -65,8 +67,9 @@ function solve_system!(
     return d
 end
 function MadNLP.factorize_wrapper!(batch_solver::AbstractBatchMPCSolver)
-    MadNLP.@trace(batch_solver.logger, "Factorization started.")
-    MadNLP.build_kkt!(batch_solver.kkt)
-    batch_solver.batch_cnt.linear_solver_time[] += @elapsed MadNLP.factorize_kkt!(batch_solver.kkt)
+    problem = batch_solver.problem
+    MadNLP.@trace(problem.logger, "Factorization started.")
+    MadNLP.build_kkt!(problem.kkt)
+    batch_solver.state.batch_cnt.linear_solver_time[] += @elapsed MadNLP.factorize_kkt!(problem.kkt)
     return
 end

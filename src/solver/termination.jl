@@ -61,19 +61,19 @@ function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
 end
 
 function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) where T
-    ws = batch_solver.workspace
-    opt = batch_solver.opt
-    bcnt = batch_solver.batch_cnt
-    x, xl, xu = batch_solver.x, batch_solver.xl, batch_solver.xu
-    zl, zu = batch_solver.zl, batch_solver.zu
-    bs = batch_solver.batch_size
-    nlb, nub = batch_solver.d.nlb, batch_solver.d.nub
+    problem = batch_solver.problem
+    state = batch_solver.state
+    ws = state.workspace
+    opt = problem.opt
+    x, xl, xu = state.x, state.xl, state.xu
+    zl, zu = state.zl, state.zu
+    nlb, nub = state.d.nlb, state.d.nub
 
-    get_inf_pr!(ws.inf_pr, MadNLP.full(batch_solver.c))
+    get_inf_pr!(ws.inf_pr, MadNLP.full(state.c))
     @. ws.inf_pr /= max(one(T), ws.norm_b)
 
-    get_inf_du!(ws.inf_du, MadNLP.full(batch_solver.f), MadNLP.full(zl),
-                MadNLP.full(zu), MadNLP.full(batch_solver.jacl))
+    get_inf_du!(ws.inf_du, MadNLP.full(state.f), MadNLP.full(zl),
+                MadNLP.full(zu), MadNLP.full(state.jacl))
     @. ws.inf_du /= max(one(T), ws.norm_c)
 
     get_inf_compl!(ws.inf_compl, x, xl, zl, xu, zu,
@@ -81,7 +81,7 @@ function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) w
     @. ws.inf_compl /= max(one(T), ws.norm_c)
     @. ws.best_complementarity = min(ws.best_complementarity, ws.inf_compl)
 
-    dual_objective!(ws.dual_obj, MadNLP.full(batch_solver.y), MadNLP.full(batch_solver.rhs),
+    dual_objective!(ws.dual_obj, MadNLP.full(state.y), MadNLP.full(state.rhs),
         lower(zl), lower(xl), upper(zu), upper(xu),
         ws.sum_lb, ws.sum_ub, nlb, nub)
 
@@ -90,10 +90,12 @@ function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) w
 end
 
 function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
-    ws = batch_solver.workspace
-    opt = batch_solver.opt
-    bcnt = batch_solver.batch_cnt
-    bs = batch_solver.batch_size
+    problem = batch_solver.problem
+    state = batch_solver.state
+    ws = state.workspace
+    opt = problem.opt
+    bcnt = state.batch_cnt
+    bs = problem.batch_size
     Int_REGULAR = Int64(Int(MadNLP.REGULAR))
 
     walltime_hit = time() - bcnt.start_time[] >= opt.max_wall_time

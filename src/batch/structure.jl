@@ -78,7 +78,7 @@ function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, n::Int, m::Int, nlb::Int,
     )
 end
 
-mutable struct BatchMPCProblem{T, MT, BM, BCB, BVS, KKT<:AbstractBatchKKTSystem{T}, REG<:AbstractRegularization, STEP<:AbstractStepRule, BARR<:AbstractBarrierUpdate}
+mutable struct BatchMPCProblem{BM, BCB, BVS, KKT<:AbstractBatchKKTSystem, REG<:AbstractRegularization, STEP<:AbstractStepRule, BARR<:AbstractBarrierUpdate}
     nlp::BM
     bcb::BCB
     kkt::KKT
@@ -118,27 +118,13 @@ mutable struct BatchMPCState{T, MT, VT}
     del_c::MT
 end
 
-mutable struct UniformBatchMPCSolver{T, MT, VT, P<:BatchMPCProblem{T, MT}, S<:BatchMPCState{T, MT, VT}} <: AbstractBatchMPCSolver{T, MT, VT}
+mutable struct UniformBatchMPCSolver{T, MT, VT, P<:BatchMPCProblem, S<:BatchMPCState{T, MT, VT}} <: AbstractBatchMPCSolver{T, MT, VT}
     problem::P
     state::S
 end
 
-# Forward field access from the solver to the underlying problem/state so
-# existing call sites such as `batch_solver.kkt` keep working alongside the
-# new `batch_solver.problem.kkt` / `batch_solver.state.x` access path. The
-# `:problem` / `:state` symbols themselves are returned directly.
-@inline function Base.getproperty(s::UniformBatchMPCSolver, name::Symbol)
-    name === :problem && return getfield(s, :problem)
-    name === :state   && return getfield(s, :state)
-    p = getfield(s, :problem)
-    hasfield(typeof(p), name) && return getfield(p, name)
-    return getfield(getfield(s, :state), name)
-end
-@inline Base.propertynames(s::UniformBatchMPCSolver) =
-    (:problem, :state, fieldnames(typeof(getfield(s, :problem)))..., fieldnames(typeof(getfield(s, :state)))...)
-
-_get_ind_lb(bs::AbstractBatchMPCSolver) = bs.bcb.ind_lb
-_get_ind_ub(bs::AbstractBatchMPCSolver) = bs.bcb.ind_ub
+_get_ind_lb(bs::AbstractBatchMPCSolver) = bs.problem.bcb.ind_lb
+_get_ind_ub(bs::AbstractBatchMPCSolver) = bs.problem.bcb.ind_ub
 
 # ---------- accessors for unified IPM kernels (batch half) ----------
 # Mirror the scalar accessors in src/structure.jl. Each batch accessor
@@ -147,40 +133,40 @@ _get_ind_ub(bs::AbstractBatchMPCSolver) = bs.bcb.ind_ub
 # unified kernels work identically on scalar (`Vector`/`T`) and batch
 # (`Matrix`/`Matrix(1,bs)`) storage.
 
-@inline _opt(s::AbstractBatchMPCSolver)            = s.opt
-@inline _logger(s::AbstractBatchMPCSolver)         = s.logger
-@inline _nlb(s::AbstractBatchMPCSolver)            = s.d.nlb
-@inline _kkt(s::AbstractBatchMPCSolver)            = s.kkt
-@inline _step_rule(s::AbstractBatchMPCSolver)      = s.step_rule
-@inline _regularization(s::AbstractBatchMPCSolver) = s.regularization
-@inline _barrier_update(s::AbstractBatchMPCSolver) = s.barrier_update
+@inline _opt(s::AbstractBatchMPCSolver)            = s.problem.opt
+@inline _logger(s::AbstractBatchMPCSolver)         = s.problem.logger
+@inline _nlb(s::AbstractBatchMPCSolver)            = s.state.d.nlb
+@inline _kkt(s::AbstractBatchMPCSolver)            = s.problem.kkt
+@inline _step_rule(s::AbstractBatchMPCSolver)      = s.problem.step_rule
+@inline _regularization(s::AbstractBatchMPCSolver) = s.problem.regularization
+@inline _barrier_update(s::AbstractBatchMPCSolver) = s.problem.barrier_update
 
-@inline _x(s::AbstractBatchMPCSolver)      = s.x
-@inline _zl(s::AbstractBatchMPCSolver)     = s.zl
-@inline _f(s::AbstractBatchMPCSolver)      = s.f
-@inline _y(s::AbstractBatchMPCSolver)      = MadNLP.full(s.y)
-@inline _c(s::AbstractBatchMPCSolver)      = MadNLP.full(s.c)
-@inline _jacl(s::AbstractBatchMPCSolver)   = MadNLP.full(s.jacl)
-@inline _p(s::AbstractBatchMPCSolver)      = s.p
-@inline _d(s::AbstractBatchMPCSolver)      = s.d
+@inline _x(s::AbstractBatchMPCSolver)      = s.state.x
+@inline _zl(s::AbstractBatchMPCSolver)     = s.state.zl
+@inline _f(s::AbstractBatchMPCSolver)      = s.state.f
+@inline _y(s::AbstractBatchMPCSolver)      = MadNLP.full(s.state.y)
+@inline _c(s::AbstractBatchMPCSolver)      = MadNLP.full(s.state.c)
+@inline _jacl(s::AbstractBatchMPCSolver)   = MadNLP.full(s.state.jacl)
+@inline _p(s::AbstractBatchMPCSolver)      = s.state.p
+@inline _d(s::AbstractBatchMPCSolver)      = s.state.d
 
-@inline _x_lr(s::AbstractBatchMPCSolver)   = lower(s.x)
-@inline _xl_r(s::AbstractBatchMPCSolver)   = lower(s.xl)
-@inline _zl_r(s::AbstractBatchMPCSolver)   = lower(s.zl)
-@inline _dx_lr(s::AbstractBatchMPCSolver)  = xp_lr(s.d)
-@inline _dz_lb(s::AbstractBatchMPCSolver)  = MadNLP.dual_lb(s.d)
+@inline _x_lr(s::AbstractBatchMPCSolver)   = lower(s.state.x)
+@inline _xl_r(s::AbstractBatchMPCSolver)   = lower(s.state.xl)
+@inline _zl_r(s::AbstractBatchMPCSolver)   = lower(s.state.zl)
+@inline _dx_lr(s::AbstractBatchMPCSolver)  = xp_lr(s.state.d)
+@inline _dz_lb(s::AbstractBatchMPCSolver)  = MadNLP.dual_lb(s.state.d)
 
-@inline _correction_lb(s::AbstractBatchMPCSolver) = MadNLP.full(s.correction_lb)
+@inline _correction_lb(s::AbstractBatchMPCSolver) = MadNLP.full(s.state.correction_lb)
 
-@inline _alpha_p(s::AbstractBatchMPCSolver) = s.workspace.alpha_p
-@inline _alpha_d(s::AbstractBatchMPCSolver) = s.workspace.alpha_d
-@inline _del_w(s::AbstractBatchMPCSolver)   = s.del_w
-@inline _del_c(s::AbstractBatchMPCSolver)   = s.del_c
-@inline _mu(s::AbstractBatchMPCSolver)      = s.workspace.mu_batch
+@inline _alpha_p(s::AbstractBatchMPCSolver) = s.state.workspace.alpha_p
+@inline _alpha_d(s::AbstractBatchMPCSolver) = s.state.workspace.alpha_d
+@inline _del_w(s::AbstractBatchMPCSolver)   = s.state.del_w
+@inline _del_c(s::AbstractBatchMPCSolver)   = s.state.del_c
+@inline _mu(s::AbstractBatchMPCSolver)      = s.state.workspace.mu_batch
 
 # Union over both solver flavours used by the unified IPM kernels.
 const AnyMPCSolver{T} = Union{MPCSolver{T}, AbstractBatchMPCSolver{T}}
-active_batch_size(bs::AbstractBatchMPCSolver) = local_batch_size(active_view(bs.batch_views))
+active_batch_size(bs::AbstractBatchMPCSolver) = local_batch_size(active_view(bs.problem.batch_views))
 
 function update_active_set!(state::BatchViewState, status::Vector{MadNLP.Status})
     nselected = 0
@@ -197,7 +183,7 @@ function update_active_set!(state::BatchViewState, status::Vector{MadNLP.Status}
     return select_local!(state, state.selected_local_buffer, nselected; reset_slots=true)
 end
 
-update_active_set!(bs::AbstractBatchMPCSolver) = update_active_set!(bs.batch_views, bs.workspace.status)
+update_active_set!(bs::AbstractBatchMPCSolver) = update_active_set!(bs.problem.batch_views, bs.state.workspace.status)
 
 
 """

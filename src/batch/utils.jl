@@ -9,7 +9,7 @@ function _csc_with_nzval(A::SparseArrays.SparseMatrixCSC, nzval, n)
 end
 
 function zero_inactive_step!(batch_solver::AbstractBatchMPCSolver{T}) where T
-    ws = batch_solver.workspace
+    ws = batch_solver.state.workspace
     ws.alpha_p .*= ws.active_mask
     ws.alpha_d .*= ws.active_mask
 end
@@ -26,8 +26,6 @@ function _build_batch_op(nzVals, nz_map, val_map, coo_I, nrows)
     )
 end
 
-# Converts an integer vector to element type Int while preserving the device
-# (CPU vector stays CPU; CuVector stays GPU). No-op when already Int-typed.
 @inline _as_int_vec(v::AbstractVector{Int}) = v
 @inline function _as_int_vec(v::AbstractVector)
     out = similar(v, Int)

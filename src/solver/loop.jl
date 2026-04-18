@@ -57,23 +57,24 @@ end
 # ---------- batch ----------
 
 function prediction_step!(solver::AbstractBatchMPCSolver)
-    ws = solver.workspace
+    state = solver.state
+    ws = state.workspace
     affine_direction!(solver)
 
     fill!(ws.tau, one(eltype(ws.tau)))
     get_fraction_to_boundary_step!(solver)
     zero_inactive_step!(solver)
     get_affine_complementarity_measure!(solver, ws.alpha_p, ws.alpha_d)
-    get_correction!(solver, MadNLP.full(solver.correction_lb))
+    get_correction!(solver, MadNLP.full(state.correction_lb))
     update_barrier!(_barrier_update(solver), solver, ws.mu_affine)
     return
 end
 
 function apply_step!(batch_solver::AbstractBatchMPCSolver)
-    ws = batch_solver.workspace
-    x, y, xl, xu = batch_solver.x, batch_solver.y, batch_solver.xl, batch_solver.xu
-    zl, zu, d = batch_solver.zl, batch_solver.zu, batch_solver.d
-    batch_size = batch_solver.batch_size
+    state = batch_solver.state
+    ws = state.workspace
+    x, y, xl, xu = state.x, state.y, state.xl, state.xu
+    zl, zu, d = state.zl, state.zu, state.d
     nlb, nub = d.nlb, d.nub
 
     # x += alpha_p * dx
@@ -96,18 +97,20 @@ function apply_step!(batch_solver::AbstractBatchMPCSolver)
 end
 
 function evaluate_model!(batch_solver::AbstractBatchMPCSolver)
-    ws = batch_solver.workspace
-    bcb = batch_solver.bcb
-    MadNLP.unpack_x!(ws.bx, bcb, batch_solver.x)
+    state = batch_solver.state
+    problem = batch_solver.problem
+    ws = state.workspace
+    bcb = problem.bcb
+    MadNLP.unpack_x!(ws.bx, bcb, state.x)
     MadNLP.eval_f_wrapper(batch_solver, ws.bx)
     MadNLP.eval_cons_wrapper!(batch_solver, ws.bx)
     MadNLP.eval_grad_f_wrapper!(batch_solver, ws.bx)
-    MadNLP.jtprod!(batch_solver.jacl, batch_solver.kkt, batch_solver.y)
+    MadNLP.jtprod!(state.jacl, problem.kkt, state.y)
     return
 end
 
 function mpc_step!(batch_solver::AbstractBatchMPCSolver)
-    fill!(batch_solver.workspace._ls_error, zero(Int32))
+    fill!(batch_solver.state.workspace._ls_error, zero(Int32))
     factorize_system!(batch_solver)
     prediction_step!(batch_solver)
     mehrotra_correction_direction!(batch_solver)
@@ -118,16 +121,17 @@ function mpc_step!(batch_solver::AbstractBatchMPCSolver)
 end
 
 function _update_active_mask!(batch_solver::AbstractBatchMPCSolver{T}) where T
-    ws = batch_solver.workspace
+    ws = batch_solver.state.workspace
     buf = ws.active_mask_cpu
-    fill_batch_view_mask!(buf, active_view(batch_solver.batch_views))
+    fill_batch_view_mask!(buf, active_view(batch_solver.problem.batch_views))
     copyto!(ws.active_mask, buf)
 end
 
 function increment_k!(batch_solver::AbstractBatchMPCSolver)
-    bcnt = batch_solver.batch_cnt
-    ws = batch_solver.workspace
-    for i in 1:batch_solver.batch_size
+    state = batch_solver.state
+    bcnt = state.batch_cnt
+    ws = state.workspace
+    for i in 1:batch_solver.problem.batch_size
         if ws.status[i] == MadNLP.REGULAR
             bcnt.k[i] += 1
         end

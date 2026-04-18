@@ -81,30 +81,31 @@ end
 # ---------- batch ----------
 
 function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
-    bkkt = batch_solver.kkt
-    x = MadNLP.primal(batch_solver.x)             # (n_tot, bs)
-    z = lower(batch_solver.zl)                    # (nlb=n_tot, bs)
-    res = MadNLP.full(batch_solver.jacl)
+    state = batch_solver.state
+    bkkt = batch_solver.problem.kkt
+    x = MadNLP.primal(state.x)             # (n_tot, bs)
+    z = lower(state.zl)                    # (nlb=n_tot, bs)
+    res = MadNLP.full(state.jacl)
 
-    bkkt.reg .= batch_solver.del_w
-    pr_diag(bkkt) .= batch_solver.del_w
-    du_diag(bkkt) .= batch_solver.del_c
+    bkkt.reg .= state.del_w
+    pr_diag(bkkt) .= state.del_w
+    du_diag(bkkt) .= state.del_c
 
     MadNLP.factorize_wrapper!(batch_solver)
 
     set_initial_primal_rhs!(batch_solver)
-    solve_system!(batch_solver.d, batch_solver, batch_solver.p)
-    x .+= MadNLP.primal(batch_solver.d)
+    solve_system!(state.d, batch_solver, state.p)
+    x .+= MadNLP.primal(state.d)
 
     set_initial_dual_rhs!(batch_solver)
-    solve_system!(batch_solver.d, batch_solver, batch_solver.p)
-    MadNLP.full(batch_solver.y) .= MadNLP.dual(batch_solver.d)
+    solve_system!(state.d, batch_solver, state.p)
+    MadNLP.full(state.y) .= MadNLP.dual(state.d)
 
-    MadNLP.jtprod!(res, bkkt, batch_solver.y)
-    res .+= MadNLP.primal(batch_solver.f)
-    copyto!(MadNLP.full(batch_solver.zl), res)
+    MadNLP.jtprod!(res, bkkt, state.y)
+    res .+= MadNLP.primal(state.f)
+    copyto!(MadNLP.full(state.zl), res)
 
-    ws = batch_solver.workspace
+    ws = state.workspace
     delta_x  = ws.alpha_xl   # (1, bs) scratch
     delta_z  = ws.alpha_xu
     sumz     = ws.sum_lb
@@ -133,48 +134,51 @@ function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
 end
 
 function initialize!(batch_solver::AbstractBatchMPCSolver{T}) where T
-    opt = batch_solver.opt
-    bcb = batch_solver.bcb
-    ws = batch_solver.workspace
+    problem = batch_solver.problem
+    state = batch_solver.state
+    opt = problem.opt
+    bcb = problem.bcb
+    ws = state.workspace
 
     # Mirrors scalar `initialize!`: simple `max(get_x0, bound_push)` projection,
     # populate y/rhs from the callback, zero jacl. Std form's lvar=0/uvar=Inf
     # are written into the batch xl/xu matrices (scalar holds them implicitly).
-    x_full = MadNLP.full(batch_solver.x)
+    x_full = MadNLP.full(state.x)
     x_full .= max.(MadNLP.get_x0(bcb), T(opt.bound_push))
-    MadNLP.full(batch_solver.xl) .= MadNLP.get_lvar(bcb)
-    MadNLP.full(batch_solver.xu) .= MadNLP.get_uvar(bcb)
-    MadNLP.full(batch_solver.y) .= MadNLP.get_y0(bcb)
-    MadNLP.full(batch_solver.rhs) .= MadNLP.get_lcon(bcb)
-    fill!(MadNLP.full(batch_solver.jacl), zero(T))
+    MadNLP.full(state.xl) .= MadNLP.get_lvar(bcb)
+    MadNLP.full(state.xu) .= MadNLP.get_uvar(bcb)
+    MadNLP.full(state.y) .= MadNLP.get_y0(bcb)
+    MadNLP.full(state.rhs) .= MadNLP.get_lcon(bcb)
+    fill!(MadNLP.full(state.jacl), zero(T))
 
-    MadNLP.initialize!(batch_solver.kkt)
-    init_regularization!(batch_solver, batch_solver.regularization)
+    MadNLP.initialize!(problem.kkt)
+    init_regularization!(batch_solver, problem.regularization)
 
-    MadNLP.unpack_x!(ws.bx, bcb, batch_solver.x)
+    MadNLP.unpack_x!(ws.bx, bcb, state.x)
     MadNLP.eval_f_wrapper(batch_solver, ws.bx)
-    MadNLP.eval_jac_wrapper!(batch_solver, batch_solver.kkt)
+    MadNLP.eval_jac_wrapper!(batch_solver, problem.kkt)
     MadNLP.eval_grad_f_wrapper!(batch_solver, ws.bx)
     MadNLP.eval_cons_wrapper!(batch_solver, ws.bx)
-    MadNLP.eval_lag_hess_wrapper!(batch_solver, batch_solver.kkt)
+    MadNLP.eval_lag_hess_wrapper!(batch_solver, problem.kkt)
 
-    batch_mapreduce!(abs, max, typemin(T), ws.norm_b, MadNLP.full(batch_solver.rhs))
-    batch_mapreduce!(abs, max, typemin(T), ws.norm_c, MadNLP.full(batch_solver.f))
+    batch_mapreduce!(abs, max, typemin(T), ws.norm_b, MadNLP.full(state.rhs))
+    batch_mapreduce!(abs, max, typemin(T), ws.norm_c, MadNLP.full(state.f))
 
     init_starting_point!(batch_solver)
     initialize_solver_state!(batch_solver)
 
-    MadNLP.jtprod!(batch_solver.jacl, batch_solver.kkt, batch_solver.y)
+    MadNLP.jtprod!(state.jacl, problem.kkt, state.y)
     return
 end
 
 function initialize_solver_state!(batch_solver::AbstractBatchMPCSolver{T}) where T
-    ws = batch_solver.workspace
-    opt = batch_solver.opt
-    fill!(ws.mu_batch, opt.mu_init)
+    problem = batch_solver.problem
+    state = batch_solver.state
+    ws = state.workspace
+    fill!(ws.mu_batch, problem.opt.mu_init)
     fill!(ws.best_complementarity, typemax(T))
     fill!(ws.status, MadNLP.REGULAR)
-    reset_active_view!(batch_solver.batch_views)
+    reset_active_view!(problem.batch_views)
     _update_active_mask!(batch_solver)
     fill!(ws.inf_pr, zero(T))
     fill!(ws.inf_du, zero(T))
@@ -183,12 +187,13 @@ function initialize_solver_state!(batch_solver::AbstractBatchMPCSolver{T}) where
     fill!(ws.alpha_p, zero(T))
     fill!(ws.alpha_d, zero(T))
     t_now = time()
-    batch_solver.batch_cnt.start_time[] = t_now
-    fill!(batch_solver.batch_cnt.k, 0)
-    batch_solver.batch_cnt.linear_solver_time[] = 0.0
-    batch_solver.batch_cnt.eval_function_time[] = 0.0
-    batch_solver.batch_cnt.obj_cnt[] = 0
-    batch_solver.batch_cnt.obj_grad_cnt[] = 0
-    batch_solver.batch_cnt.con_cnt[] = 0
+    bcnt = state.batch_cnt
+    bcnt.start_time[] = t_now
+    fill!(bcnt.k, 0)
+    bcnt.linear_solver_time[] = 0.0
+    bcnt.eval_function_time[] = 0.0
+    bcnt.obj_cnt[] = 0
+    bcnt.obj_grad_cnt[] = 0
+    bcnt.con_cnt[] = 0
     return
 end

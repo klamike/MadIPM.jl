@@ -48,22 +48,23 @@ end
 # ---------- batch ----------
 
 function update_solution!(stats::BatchExecutionStats, batch_solver::AbstractBatchMPCSolver)
-    ws = batch_solver.workspace
-    bcb = batch_solver.bcb
-    x, zl, zu = batch_solver.x, batch_solver.zl, batch_solver.zu
+    state = batch_solver.state
+    ws = state.workspace
+    bcb = batch_solver.problem.bcb
+    x, zl, zu = state.x, state.zl, state.zu
 
     stats.status .= ws.status
-    stats.iter .= batch_solver.batch_cnt.k
+    stats.iter .= state.batch_cnt.k
 
     MadNLP.unpack_x!(stats.solution, bcb, x)
-    MadNLP.unpack_y!(stats.multipliers, bcb, MadNLP.full(batch_solver.y))
+    MadNLP.unpack_y!(stats.multipliers, bcb, MadNLP.full(state.y))
     MadNLP.unpack_z!(stats.multipliers_L, bcb, MadNLP.variable(zl))
     MadNLP.unpack_z!(stats.multipliers_U, bcb, MadNLP.variable(zu))
     unpack_obj!(stats.objective, bcb, ws.obj_val)
-    MadNLP.unpack_cons!(stats.constraints, bcb, MadNLP.full(batch_solver.c), MadNLP.full(batch_solver.rhs), bcb.ind_ineq, MadNLP.slack(x))
+    MadNLP.unpack_cons!(stats.constraints, bcb, MadNLP.full(state.c), MadNLP.full(state.rhs), bcb.ind_ineq, MadNLP.slack(x))
 
     stats.dual_feas .= vec(ws.inf_du)
     stats.primal_feas .= vec(ws.inf_pr)
-    stats.total_time .= batch_solver.batch_cnt.total_time
+    stats.total_time .= state.batch_cnt.total_time
     return stats
 end
