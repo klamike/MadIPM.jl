@@ -11,7 +11,7 @@ function prediction_step!(solver::MPCSolver)
     alpha_aff_p, alpha_aff_d = get_fraction_to_boundary_step(solver, one(eltype(state.y)))
     mu_affine = get_affine_complementarity_measure(solver, alpha_aff_p, alpha_aff_d)
     get_correction!(solver, state.correction_lb)
-    state.mu_curr = update_barrier!(_barrier_update(solver), solver, mu_affine)
+    update_barrier!(_barrier_update(solver), solver, mu_affine)
     return
 end
 

@@ -1,9 +1,7 @@
 mutable struct MPCProblem{
     T,
-    VT <: AbstractVector{T},
-    VI <: AbstractVector{Int},
     KKTSystem <: MadNLP.AbstractKKTSystem{T},
-    StdModel <: NLPModels.AbstractNLPModel{T,VT},
+    StdModel <: NLPModels.AbstractNLPModel{T},
     OrigModel <: NLPModels.AbstractNLPModel,
     CB <: MadNLP.AbstractCallback{T},
     WS,
@@ -22,10 +20,7 @@ mutable struct MPCProblem{
     step_rule::STEP
     barrier_update::BARR
     logger::MadNLP.MadNLPLogger
-    n::Int
-    m::Int
     nlb::Int
-    ind_lb::VI
 end
 
 mutable struct MPCState{
@@ -48,11 +43,9 @@ mutable struct MPCState{
     p::MadNLP.UnreducedKKTVector{T, VT}
 
     _w1::MadNLP.UnreducedKKTVector{T, VT}
-    _w2::MadNLP.UnreducedKKTVector{T, VT}
 
     correction_lb::VT
     rhs::VT
-    ind_ineq::VI
 
     x_lr::MadNLP.SubVector{T,VT,VI}
     zl_r::MadNLP.SubVector{T,VT,VI}
@@ -71,7 +64,6 @@ mutable struct MPCState{
     del_w::T
     del_c::T
     best_complementarity::T
-    mu_curr::T
     status::MadNLP.Status
 end
 
@@ -86,7 +78,6 @@ end
 
 @inline _opt(s::MPCSolver)            = s.problem.opt
 @inline _logger(s::MPCSolver)         = s.problem.logger
-@inline _nlb(s::MPCSolver)            = s.problem.nlb
 @inline _kkt(s::MPCSolver)            = s.problem.kkt
 @inline _step_rule(s::MPCSolver)      = s.problem.step_rule
 @inline _regularization(s::MPCSolver) = s.problem.regularization
@@ -162,7 +153,6 @@ function MPCSolver(nlp::Union{LinearModel, QuadraticModel}; kwargs...)
     d = MadNLP.UnreducedKKTVector(VT, n, m, nlb, 0, ind_lb, empty_ind)
     p = MadNLP.UnreducedKKTVector(VT, n, m, nlb, 0, ind_lb, empty_ind)
     _w1 = MadNLP.UnreducedKKTVector(VT, n, m, nlb, 0, ind_lb, empty_ind)
-    _w2 = MadNLP.UnreducedKKTVector(VT, n, m, nlb, 0, ind_lb, empty_ind)
 
     correction_lb = VT(undef, nlb)
     jacl = VT(undef, n)
@@ -186,10 +176,7 @@ function MPCSolver(nlp::Union{LinearModel, QuadraticModel}; kwargs...)
         step_rule,
         barrier_update,
         logger,
-        n,
-        m,
         nlb,
-        ind_lb,
     )
     T = eltype(y)
     z = zero(T)
@@ -198,13 +185,12 @@ function MPCSolver(nlp::Union{LinearModel, QuadraticModel}; kwargs...)
         x, y, zl,
         z,
         f, c, jacl,
-        d, p, _w1, _w2, correction_lb, rhs, empty_ind,
+        d, p, _w1, correction_lb, rhs,
         x_lr, zl_r, dx_lr,
         z, z, z, z, z,
         z,
         z, z, z, z,
         typemax(T),
-        z,
         MadNLP.INITIAL,
     )
     return MPCSolver(problem, state)

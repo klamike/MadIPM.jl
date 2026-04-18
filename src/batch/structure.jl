@@ -106,7 +106,6 @@ mutable struct BatchMPCState{T, MT, VT}
     jacl::BatchVector{T, MT}
     rhs::BatchVector{T, MT}
     correction_lb::BatchVector{T, MT}
-    correction_ub::BatchVector{T, MT}
 
     d::BatchUnreducedKKTVector{T, MT}
     p::BatchUnreducedKKTVector{T, MT}
@@ -135,7 +134,6 @@ _get_ind_ub(bs::AbstractBatchMPCSolver) = bs.problem.bcb.ind_ub
 
 @inline _opt(s::AbstractBatchMPCSolver)            = s.problem.opt
 @inline _logger(s::AbstractBatchMPCSolver)         = s.problem.logger
-@inline _nlb(s::AbstractBatchMPCSolver)            = s.state.d.nlb
 @inline _kkt(s::AbstractBatchMPCSolver)            = s.problem.kkt
 @inline _step_rule(s::AbstractBatchMPCSolver)      = s.problem.step_rule
 @inline _regularization(s::AbstractBatchMPCSolver) = s.problem.regularization
@@ -260,7 +258,6 @@ function UniformBatchMPCSolver(
     batch_w1 = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
 
     batch_correction_lb = BatchVector(MT, VT, nlb, batch_size)
-    batch_correction_ub = BatchVector(MT, VT, nub, batch_size)
     batch_jacl          = BatchVector(MT, VT, n, batch_size)
     batch_y             = BatchVector(MT, VT, m, batch_size)
     batch_c             = BatchVector(MT, VT, m, batch_size)
@@ -281,7 +278,7 @@ function UniformBatchMPCSolver(
         cnt,
         batch_x, batch_xl, batch_xu, batch_zl, batch_zu, batch_f,
         batch_y, batch_c, batch_jacl, batch_rhs,
-        batch_correction_lb, batch_correction_ub,
+        batch_correction_lb,
         batch_d, batch_p, batch_w1,
         workspace,
         batch_del_w, batch_del_c,

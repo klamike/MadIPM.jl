@@ -20,7 +20,7 @@ function update_barrier!(rule::Mehrotra, solver::MPCSolver{T}, mu_affine) where 
         one(T)
     end
     state.mu = max(T(problem.opt.mu_min), sigma * mu_curr)
-    return mu_curr
+    return
 end
 
 function get_affine_complementarity_measure(solver::MPCSolver, alpha_p, alpha_d)
