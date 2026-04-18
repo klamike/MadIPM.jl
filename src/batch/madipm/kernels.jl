@@ -390,31 +390,29 @@ function _adjust_boundary_active!(x_lr::AbstractMatrix{T}, xl_r, x_ur, xu_r, mu,
     )
 end
 
-function init_regularization!(solver::AbstractBatchMPCSolver, ::NoRegularization)
-    fill!(solver.del_w, 1.0)
-    fill!(solver.del_c, 0.0)
+# `init_regularization!` and `update_regularization!` are unified in
+# src/kernels.jl. Batch dispatch goes through `_apply_reg_update!` (below)
+# which uses an active mask to preserve converged instances' values, and
+# evaluates `_update_reg` per-element so AdaptiveRegularization decays each
+# instance's own state (rather than mutating the shared reg struct).
+
+@inline function _apply_reg_update!(s::AbstractBatchMPCSolver, ::NoRegularization, ::Type{T}) where T
+    mask = s.workspace.active_mask
+    @. s.del_w = ifelse(mask == one(T), zero(T), s.del_w)
+    @. s.del_c = ifelse(mask == one(T), zero(T), s.del_c)
+    return
 end
-update_regularization!(solver::AbstractBatchMPCSolver, reg) =
-    update_regularization!(solver, reg, solver.workspace.active_mask)
-function update_regularization!(solver::AbstractBatchMPCSolver, ::NoRegularization, mask)
-    solver.del_w .= ifelse.(mask .== 1, 0.0, solver.del_w)
-    solver.del_c .= ifelse.(mask .== 1, 0.0, solver.del_c)
+@inline function _apply_reg_update!(s::AbstractBatchMPCSolver, r::FixedRegularization, ::Type{T}) where T
+    mask = s.workspace.active_mask
+    dp, dd = T(r.delta_p), T(r.delta_d)
+    @. s.del_w = ifelse(mask == one(T), dp, s.del_w)
+    @. s.del_c = ifelse(mask == one(T), dd, s.del_c)
+    return
 end
-function init_regularization!(solver::AbstractBatchMPCSolver, reg::FixedRegularization)
-    fill!(solver.del_w, 1.0)
-    fill!(solver.del_c, reg.delta_d)
-end
-function update_regularization!(solver::AbstractBatchMPCSolver, reg::FixedRegularization, mask)
-    solver.del_w .= ifelse.(mask .== 1, reg.delta_p, solver.del_w)
-    solver.del_c .= ifelse.(mask .== 1, reg.delta_d, solver.del_c)
-end
-function init_regularization!(solver::AbstractBatchMPCSolver, reg::AdaptiveRegularization)
-    fill!(solver.del_w, 1.0)
-    fill!(solver.del_c, reg.delta_d)
-end
-function update_regularization!(solver::AbstractBatchMPCSolver, reg::AdaptiveRegularization, mask)
-    reg.delta_p = max(reg.delta_p / 10.0, reg.delta_min)
-    reg.delta_d = min(reg.delta_d / 10.0, -reg.delta_min)
-    solver.del_w .= ifelse.(mask .== 1, reg.delta_p, solver.del_w)
-    solver.del_c .= ifelse.(mask .== 1, reg.delta_d, solver.del_c)
+@inline function _apply_reg_update!(s::AbstractBatchMPCSolver, r::AdaptiveRegularization, ::Type{T}) where T
+    mask = s.workspace.active_mask
+    dmin = T(r.delta_min)
+    @. s.del_w = ifelse(mask == one(T), max(s.del_w / T(10), dmin), s.del_w)
+    @. s.del_c = ifelse(mask == one(T), min(s.del_c / T(10), -dmin), s.del_c)
+    return
 end

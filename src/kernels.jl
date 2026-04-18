@@ -15,8 +15,6 @@
 #     uses `batch_mapreduce!`; signatures differ.
 #   * `update_step!` for `MehrotraAdaptiveStep` — scalar's tight scalar-state
 #     formulation vs batch's per-column kernel.
-#   * `init_regularization!` / `update_regularization!` — scalar mutates a
-#     single `T`, batch mutates an `MT(1, bs)`.
 #
 # This file is loaded *after* the batch infrastructure so that
 # `AnyMPCSolver{T}` is in scope.
@@ -196,23 +194,32 @@ end
 
 # ---------- regularization (helpers shared by scalar and batch) ----------
 
-_init_reg(::NoRegularization, ::Type{T}, _, _) where {T} = (one(T), zero(T))
-_init_reg(r::FixedRegularization, ::Type{T}, _, _) where {T} = (one(T), T(r.delta_d))
-_init_reg(r::AdaptiveRegularization, ::Type{T}, _, _) where {T} = (T(r.init_delta_p), T(r.init_delta_d))
+_init_reg(::NoRegularization, ::Type{T}) where {T} = (one(T), zero(T))
+_init_reg(r::FixedRegularization, ::Type{T}) where {T} = (one(T), T(r.delta_d))
+_init_reg(r::AdaptiveRegularization, ::Type{T}) where {T} = (T(r.init_delta_p), T(r.init_delta_d))
 
 _update_reg(::NoRegularization, ::Type{T}, _, _) where {T} = (zero(T), zero(T))
 _update_reg(r::FixedRegularization, ::Type{T}, _, _) where {T} = (T(r.delta_p), T(r.delta_d))
 _update_reg(r::AdaptiveRegularization, ::Type{T}, dw, dc) where {T} =
     (max(dw / T(10), T(r.delta_min)), min(dc / T(10), -T(r.delta_min)))
 
-function init_regularization!(solver::MPCSolver, reg::AbstractRegularization)
-    T = eltype(solver.state.y)
-    solver.state.del_w, solver.state.del_c = _init_reg(reg, T, solver.state.del_w, solver.state.del_c)
+function init_regularization!(solver::AnyMPCSolver, reg::AbstractRegularization)
+    T = eltype(_y(solver))
+    dw, dc = _init_reg(reg, T)
+    _assign_del!(solver, dw, dc)
     return
 end
 
-function update_regularization!(solver::MPCSolver, reg::AbstractRegularization)
-    T = eltype(solver.state.y)
-    solver.state.del_w, solver.state.del_c = _update_reg(reg, T, solver.state.del_w, solver.state.del_c)
+function update_regularization!(solver::AnyMPCSolver, reg::AbstractRegularization)
+    T = eltype(_y(solver))
+    _apply_reg_update!(solver, reg, T)
     return
 end
+
+@inline function _apply_reg_update!(s::MPCSolver, reg, ::Type{T}) where T
+    s.state.del_w, s.state.del_c = _update_reg(reg, T, s.state.del_w, s.state.del_c)
+    return
+end
+
+@inline _assign_del!(s::MPCSolver, dw, dc) = (s.state.del_w = dw; s.state.del_c = dc; nothing)
+@inline _assign_del!(s::AbstractBatchMPCSolver, dw, dc) = (fill!(s.del_w, dw); fill!(s.del_c, dc); nothing)
