@@ -150,6 +150,10 @@ function MadIPM.build_normal_system(n_rows, n_cols, Jtp::CuVector{Ti}, Jtj::CuVe
 end
 
 MadIPM.sparse_csc_format(::Type{<:CuArray}) = CuSparseMatrixCSC
+
+function MadIPM._csc_with_nzval(A::CuSparseMatrixCSC, nzval, n)
+    return CuSparseMatrixCSC{eltype(nzval), eltype(A.colPtr)}(A.colPtr, A.rowVal, nzval, (n, n))
+end
 MadIPM._colptr(A::CuSparseMatrixCSC) = A.colPtr
 MadIPM._rowval(A::CuSparseMatrixCSC) = A.rowVal
 MadIPM._nzval(A::CuSparseMatrixCSC) = A.nzVal
