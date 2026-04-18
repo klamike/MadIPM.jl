@@ -203,16 +203,22 @@ end
 # CUSPARSE SpMV (reusing the per-column view of A_vals into AT.nzVal).
 # Dispatch on `AnyCuMatrix` (CuMatrix and SubArrays of CuMatrix) so the
 # `BatchUnreducedKKTVector._dual` view passed by `mul!` doesn't fall back
-# to the CPU loop in `src/batch/KKT/Sparse/normal.jl`.
+# to the CPU loop in `src/batch/KKT/Sparse/normal.jl`. CUSPARSE's `mul!`
+# also requires both the output and the dense input to be contiguous
+# CuVectors, so we route per-column reads through `_cucol` and per-column
+# writes through a contiguous scratch buffer + `copyto!` of the view.
 function MadNLP.jtprod!(
     res::AnyCuMatrix{T}, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT}, y,
 ) where {T, LS, MT <: CuMatrix{T}}
     yfull = y isa MadIPM.BatchVector ? MadNLP.full(y) : y
     fill!(res, zero(T))
+    out_buf = CUDA.zeros(T, size(res, 1))
     @inbounds for k in 1:bkkt.batch_size
         Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
         AT_k = CUSPARSE.CuSparseMatrixCSC(bkkt.AT.colPtr, bkkt.AT.rowVal, Ax_k, size(bkkt.AT))
-        mul!(view(res, :, k), AT_k, _cucol(yfull, k), one(T), one(T))
+        fill!(out_buf, zero(T))
+        mul!(out_buf, AT_k, _cucol(yfull, k), one(T), one(T))
+        copyto!(view(res, :, k), out_buf)
     end
     return res
 end
@@ -226,11 +232,15 @@ function MadIPM._batch_mul_A!(
     x::AnyCuMatrix{T}, alpha, beta,
 ) where {T, LS, MT <: CuMatrix{T}}
     if iszero(beta); fill!(y, zero(T)); else; @. y *= beta; end
+    out_buf = CUDA.zeros(T, size(y, 1))
     @inbounds for k in 1:bkkt.batch_size
         Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
         AT_k = CUSPARSE.CuSparseMatrixCSC(bkkt.AT.colPtr, bkkt.AT.rowVal, Ax_k, size(bkkt.AT))
-        # mul!(y, A, x) where A = AT' so transpose.
-        mul!(view(y, :, k), transpose(AT_k), _cucol(x, k), alpha, one(T))
+        # mul!(y, A, x) where A = AT' so transpose. Compute into contiguous
+        # `out_buf` then accumulate into the (possibly strided) y[:, k].
+        fill!(out_buf, zero(T))
+        mul!(out_buf, transpose(AT_k), _cucol(x, k), alpha, zero(T))
+        view(y, :, k) .+= out_buf
     end
     return y
 end
