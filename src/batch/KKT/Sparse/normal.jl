@@ -22,6 +22,12 @@ struct NormalUniformBatchKKTSystem{T, LS, MT, VT, VI, VI32, ATC, AUGC, BVS} <: A
     rhs_buffer::MT                                 # ((n_tot + m), bs) for full KKT solves
     r_primal::MT                                   # (n_tot, bs)
     r_dual::MT                                     # (m, bs)
+    # Per-column contiguous CuVector scratch for CUSPARSE mul!. CUSPARSE
+    # rejects strided / wrapped destinations, so the GPU jtprod! /
+    # _batch_mul_A! write here once per loop iteration and copyto! into the
+    # (possibly strided) caller-provided destination column.
+    spmv_n_buf::VT                                 # (n_tot,)
+    spmv_m_buf::VT                                 # (m,)
     # Bound-related diagonals (per-instance)
     reg::MT                                        # (n_tot, bs)
     pr_diag::MT                                    # (n_tot, bs)
@@ -104,6 +110,8 @@ function MadNLP.create_kkt_system(
     rhs_buffer = similar(A_vals, n_tot + m, batch_size)
     r_primal = similar(A_vals, n_tot, batch_size)
     r_dual = similar(A_vals, m, batch_size)
+    spmv_n_buf = similar(A_vals, T, n_tot)
+    spmv_m_buf = similar(A_vals, T, m)
 
     reg     = similar(A_vals, n_tot, batch_size)
     pr_diag = similar(A_vals, n_tot, batch_size)
@@ -119,6 +127,7 @@ function MadNLP.create_kkt_system(
         A_coo, A_vals, AT, A_csr_map, jac_coo_view,
         aug_com, aug_com_nzvals, batch_solver,
         rhs_buffer, r_primal, r_dual,
+        spmv_n_buf, spmv_m_buf,
         reg, pr_diag, du_diag, l_diag, u_diag, l_lower, u_lower,
         batch_size, batch_views, n_tot, m,
         bcb.ind_ineq, bcb.ind_lb, bcb.ind_ub,
