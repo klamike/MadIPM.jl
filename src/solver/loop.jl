@@ -122,7 +122,7 @@ end
 
 function increment_k!(batch_solver::AbstractBatchMPCSolver)
     state = batch_solver.state
-    bcnt = state.batch_cnt
+    bcnt = state.cnt
     ws = state.workspace
     for i in 1:batch_solver.problem.batch_size
         if ws.status[i] == MadNLP.REGULAR

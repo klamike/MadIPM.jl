@@ -154,14 +154,15 @@ function Base.getindex(stats::BatchExecutionStats, i::Int)
     )
 end
 
-struct BatchCounters
+mutable struct BatchCounters
     k::Vector{Int}              # per-instance iteration count
-    start_time::Base.RefValue{Float64}
+    start_time::Float64
     total_time::Vector{Float64} # per-instance total solve time
-    linear_solver_time::Base.RefValue{Float64}
-    eval_function_time::Base.RefValue{Float64}
-    obj_cnt::Base.RefValue{Int}
-    obj_grad_cnt::Base.RefValue{Int}
-    con_cnt::Base.RefValue{Int}
+    linear_solver_time::Float64
+    eval_function_time::Float64
+    obj_cnt::Int
+    obj_grad_cnt::Int
+    con_cnt::Int
+    factorization_cnt::Int
 end
-BatchCounters(batch_size::Int) = BatchCounters(zeros(Int, batch_size), Ref(0.0), zeros(Float64, batch_size), Ref(0.0), Ref(0.0), Ref(0), Ref(0), Ref(0))
+BatchCounters(batch_size::Int) = BatchCounters(zeros(Int, batch_size), 0.0, zeros(Float64, batch_size), 0.0, 0.0, 0, 0, 0, 0)

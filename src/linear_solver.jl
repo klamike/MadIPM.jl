@@ -29,13 +29,8 @@ end
 function MadNLP.factorize_wrapper!(s::AnyMPCSolver)
     MadNLP.@trace(_logger(s), "Factorization started.")
     MadNLP.build_kkt!(_kkt(s))
-    _accumulate_factorize_time!(s, @elapsed MadNLP.factorize_kkt!(_kkt(s)))
-    return
-end
-
-@inline function _accumulate_factorize_time!(s::MPCSolver, t)
     cnt = s.state.cnt
-    cnt.linear_solver_time += t
+    cnt.linear_solver_time += @elapsed MadNLP.factorize_kkt!(_kkt(s))
     cnt.factorization_cnt += 1
     return
 end
@@ -69,8 +64,4 @@ function solve_system!(
     @. ws._norm_gpu_w /= max(one(T), ws._norm_gpu_p)    # ratio in-place
     @. ws._ls_error |= isnan(ws._norm_gpu_w) | (check_res & (ws._norm_gpu_w > tol_ls))
     return d
-end
-@inline function _accumulate_factorize_time!(s::AbstractBatchMPCSolver, t)
-    s.state.batch_cnt.linear_solver_time[] += t
-    return
 end

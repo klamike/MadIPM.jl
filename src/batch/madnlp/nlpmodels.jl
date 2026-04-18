@@ -158,15 +158,15 @@ function MadNLP.eval_f_wrapper(solver::AbstractBatchMPCSolver, bx::AbstractMatri
     state = solver.state
     ws = state.workspace
     bcb = solver.problem.bcb
-    bcnt = state.batch_cnt
+    bcnt = state.cnt
 
     t = @elapsed begin
         MadNLP._eval_f_wrapper(bcb, bx, ws.bf)
         ws.bf .*= vec(bcb.obj_sign)
         vec(ws.obj_val) .= ws.bf
     end
-    bcnt.eval_function_time[] += t
-    bcnt.obj_cnt[] += 1
+    bcnt.eval_function_time += t
+    bcnt.obj_cnt += 1
     return
 end
 
@@ -174,7 +174,7 @@ function MadNLP.eval_cons_wrapper!(solver::AbstractBatchMPCSolver, bx::AbstractM
     state = solver.state
     ws = state.workspace
     bcb = solver.problem.bcb
-    bcnt = state.batch_cnt
+    bcnt = state.cnt
     ind_ineq = bcb.ind_ineq
     ns = length(ind_ineq)
 
@@ -185,8 +185,8 @@ function MadNLP.eval_cons_wrapper!(solver::AbstractBatchMPCSolver, bx::AbstractM
         end
         MadNLP.full(state.c) .-= MadNLP.full(state.rhs)
     end
-    bcnt.eval_function_time[] += t
-    bcnt.con_cnt[] += 1
+    bcnt.eval_function_time += t
+    bcnt.con_cnt += 1
     return
 end
 
@@ -194,7 +194,7 @@ function MadNLP.eval_grad_f_wrapper!(solver::AbstractBatchMPCSolver, bx::Abstrac
     state = solver.state
     ws = state.workspace
     bcb = solver.problem.bcb
-    bcnt = state.batch_cnt
+    bcnt = state.cnt
     nvar = bcb.nvar
 
     t = @elapsed begin
@@ -203,7 +203,7 @@ function MadNLP.eval_grad_f_wrapper!(solver::AbstractBatchMPCSolver, bx::Abstrac
         BG .*= bcb.obj_sign
         copyto!(MadNLP.variable(state.f), BG)
     end
-    bcnt.eval_function_time[] += t
-    bcnt.obj_grad_cnt[] += 1
+    bcnt.eval_function_time += t
+    bcnt.obj_grad_cnt += 1
     return
 end

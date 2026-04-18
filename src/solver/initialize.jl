@@ -173,13 +173,13 @@ function initialize_solver_state!(batch_solver::AbstractBatchMPCSolver{T}) where
     fill!(ws.alpha_p, zero(T))
     fill!(ws.alpha_d, zero(T))
     t_now = time()
-    bcnt = state.batch_cnt
-    bcnt.start_time[] = t_now
+    bcnt = state.cnt
+    bcnt.start_time = t_now
     fill!(bcnt.k, 0)
-    bcnt.linear_solver_time[] = 0.0
-    bcnt.eval_function_time[] = 0.0
-    bcnt.obj_cnt[] = 0
-    bcnt.obj_grad_cnt[] = 0
-    bcnt.con_cnt[] = 0
+    bcnt.linear_solver_time = 0.0
+    bcnt.eval_function_time = 0.0
+    bcnt.obj_cnt = 0
+    bcnt.obj_grad_cnt = 0
+    bcnt.con_cnt = 0
     return
 end

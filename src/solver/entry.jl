@@ -83,9 +83,9 @@ function solve!(batch_solver::AbstractBatchMPCSolver{T, MT, VT}) where {T, MT, V
         end
         problem.opt.rethrow_error && rethrow(e)
     finally
-        bcnt = state.batch_cnt
+        bcnt = state.cnt
         t_end = time()
-        bcnt.total_time .= t_end .- bcnt.start_time[]
+        bcnt.total_time .= t_end .- bcnt.start_time
         update_solution!(stats, batch_solver)
         status_counts = Dict{MadNLP.Status, Int}()
         for i in 1:bs
@@ -158,7 +158,7 @@ function MadNLP.print_iter(batch_solver::AbstractBatchMPCSolver)
     logger = problem.logger
     MadNLP.get_level(logger) > MadNLP.INFO && return
     ws = state.workspace
-    bcnt = state.batch_cnt
+    bcnt = state.cnt
     na = active_batch_size(batch_solver)
     bs = problem.batch_size
     k = maximum(bcnt.k)

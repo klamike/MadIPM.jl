@@ -54,7 +54,7 @@ function update_solution!(stats::BatchExecutionStats, batch_solver::AbstractBatc
     x, zl, zu = state.x, state.zl, state.zu
 
     stats.status .= ws.status
-    stats.iter .= state.batch_cnt.k
+    stats.iter .= state.cnt.k
 
     MadNLP.unpack_x!(stats.solution, bcb, x)
     MadNLP.unpack_y!(stats.multipliers, bcb, MadNLP.full(state.y))
@@ -65,6 +65,6 @@ function update_solution!(stats::BatchExecutionStats, batch_solver::AbstractBatc
 
     stats.dual_feas .= vec(ws.inf_du)
     stats.primal_feas .= vec(ws.inf_pr)
-    stats.total_time .= state.batch_cnt.total_time
+    stats.total_time .= state.cnt.total_time
     return stats
 end

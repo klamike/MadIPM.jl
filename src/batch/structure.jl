@@ -92,7 +92,7 @@ mutable struct BatchMPCProblem{BM, BCB, BVS, KKT<:AbstractBatchKKTSystem, REG<:A
 end
 
 mutable struct BatchMPCState{T, MT, VT}
-    batch_cnt::BatchCounters
+    cnt::BatchCounters
 
     x::BatchPrimalVector{T, MT}
     xl::BatchPrimalVector{T, MT}
@@ -215,7 +215,7 @@ function UniformBatchMPCSolver(
     step_rule = options.step_rule
     barrier_update = options.barrier_update
 
-    batch_cnt = BatchCounters(batch_size)
+    cnt = BatchCounters(batch_size)
     bcb = MadNLP.create_callback(
         UniformBatchCallback{T,VT,MT,VI},
         bnlp;
@@ -274,7 +274,7 @@ function UniformBatchMPCSolver(
         logger, batch_views, batch_size,
     )
     state = BatchMPCState(
-        batch_cnt,
+        cnt,
         batch_x, batch_xl, batch_xu, batch_zl, batch_zu, batch_f,
         batch_y, batch_c, batch_jacl, batch_rhs,
         batch_correction_lb, batch_correction_ub,

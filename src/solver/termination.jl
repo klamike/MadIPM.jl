@@ -94,11 +94,11 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
     state = batch_solver.state
     ws = state.workspace
     opt = problem.opt
-    bcnt = state.batch_cnt
+    bcnt = state.cnt
     bs = problem.batch_size
     Int_REGULAR = Int64(Int(MadNLP.REGULAR))
 
-    walltime_hit = time() - bcnt.start_time[] >= opt.max_wall_time
+    walltime_hit = time() - bcnt.start_time >= opt.max_wall_time
     max_iter_hit = walltime_hit ? false :
         any(ws.status[i] == MadNLP.REGULAR && bcnt.k[i] >= opt.max_iter for i in 1:bs)
 
