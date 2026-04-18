@@ -15,12 +15,19 @@ function prediction_step!(solver::MPCSolver)
     return
 end
 
-function apply_step!(solver::MPCSolver)
-    state = solver.state
-    axpy!(state.alpha_p, MadNLP.primal(state.d), MadNLP.primal(state.x))
-    axpy!(state.alpha_d, MadNLP.dual(state.d), state.y)
-    state.zl_r .+= state.alpha_d .* MadNLP.dual_lb(state.d)
-    state.cnt.k += 1
+function apply_step!(s::AnyMPCSolver)
+    αp = _alpha_p(s)
+    αd = _alpha_d(s)
+    d  = _d(s)
+    MadNLP.primal(_x(s)) .+= αp .* MadNLP.primal(d)
+    _y(s) .+= αd .* MadNLP.dual(d)
+    _zl_r(s) .+= αd .* _dz_lb(s)
+    _apply_step_post!(s)
+    return
+end
+
+@inline function _apply_step_post!(solver::MPCSolver)
+    solver.state.cnt.k += 1
     return
 end
 
@@ -69,28 +76,15 @@ function prediction_step!(solver::AbstractBatchMPCSolver)
     return
 end
 
-function apply_step!(batch_solver::AbstractBatchMPCSolver)
+@inline function _apply_step_post!(batch_solver::AbstractBatchMPCSolver)
     state = batch_solver.state
     ws = state.workspace
-    x, y, xl, xu = state.x, state.y, state.xl, state.xu
-    zl, zu, d = state.zl, state.zu, state.d
-    nlb, nub = d.nlb, d.nub
-
-    # x += alpha_p * dx
-    MadNLP.full(x) .+= ws.alpha_p .* MadNLP.primal(d)
-
-    # y += alpha_d * d_dual
-    MadNLP.full(y) .+= ws.alpha_d .* MadNLP.dual(d)
-
-    # zl_r += alpha_d * dzl, zu_r += alpha_d * dzu
-    if nlb > 0
-        lower(zl) .+= ws.alpha_d .* MadNLP.dual_lb(d)
+    d = state.d
+    # ub-side dual update (batch only — std-form scalar has nub=0)
+    if d.nub > 0
+        upper(state.zu) .+= ws.alpha_d .* MadNLP.dual_ub(d)
     end
-    if nub > 0
-        upper(zu) .+= ws.alpha_d .* MadNLP.dual_ub(d)
-    end
-
-    _adjust_boundary_active!(lower(x), lower(xl), upper(x), upper(xu), ws.mu_batch, ws.active_mask)
+    _adjust_boundary_active!(lower(state.x), lower(state.xl), upper(state.x), upper(state.xu), ws.mu_batch, ws.active_mask)
     increment_k!(batch_solver)  # this is CPU work, ends up overlapped
     return
 end
