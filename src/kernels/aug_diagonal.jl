@@ -41,10 +41,10 @@ end
 #   * `MadNLP.ScaledSparseKKTSystem` expects the positive convention
 #     `l_diag = x - xl`, `u_diag = xu - x`, and its `_set_aug_diagonal!`
 #     handles the (different) pr_diag layout with the scaling factor.
-@inline _aug_l_diag_sign(_kkt) = -1
-@inline _aug_u_diag_sign(_kkt) = -1
-@inline _aug_l_diag_sign(::MadNLP.ScaledSparseKKTSystem) = +1
-@inline _aug_u_diag_sign(::MadNLP.ScaledSparseKKTSystem) = +1
+@inline _aug_l_diag_sign(kkt) = -one(eltype(kkt.reg))
+@inline _aug_u_diag_sign(kkt) = -one(eltype(kkt.reg))
+@inline _aug_l_diag_sign(kkt::MadNLP.ScaledSparseKKTSystem) = one(eltype(kkt.reg))
+@inline _aug_u_diag_sign(kkt::MadNLP.ScaledSparseKKTSystem) = one(eltype(kkt.reg))
 
 function _set_aug_diagonal_reg_unmasked!(kkt, s::AnyMPCSolver)
     kkt.reg .= _del_w(s)
