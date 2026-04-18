@@ -37,13 +37,19 @@ include("batch/madnlp/initialization.jl")
 include("batch/madnlp/nlpmodels.jl")
 include("batch/KKT/Sparse/normal.jl")
 
-# Batch IPM hot-path kernels and main solver loop (std-form-aware).
-include("batch/madipm/kernels.jl")
+# Batch IPM hot-path solver loop (std-form-aware).
 include("batch/madipm/solver.jl")
 
-# Unified IPM kernels — dispatch on `Union{MPCSolver, AbstractBatchMPCSolver}`.
-# Loaded last so both solver types are in scope.
-include("kernels.jl")
+# IPM kernels — split by section. Each file collocates the unified
+# `AnyMPCSolver` dispatch (when applicable) with the scalar (`MPCSolver`)
+# and batch (`AbstractBatchMPCSolver`) specializations. Loaded last so
+# both solver types and `AnyMPCSolver` are in scope.
+include("kernels/direction.jl")
+include("kernels/rhs.jl")
+include("kernels/aug_diagonal.jl")
+include("kernels/complementarity.jl")
+include("kernels/step.jl")
+include("kernels/regularization.jl")
 
 export LPData, LinearModel, MPCSolver, QPData, QuadraticModel, madipm, madipm_batch, standard_form, update!
 
