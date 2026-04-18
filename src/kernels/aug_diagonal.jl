@@ -1,3 +1,12 @@
+# Unified diagonal-block accessors so the same broadcasted writes work for
+# scalar (`AbstractKKTSystem` exposes `pr_diag` / `du_diag` as fields) and
+# batch (`AbstractBatchKKTSystem` packs them as views into `nzVals` —
+# already provided as `pr_diag(::AbstractBatchKKTSystem)` /
+# `du_diag(::AbstractBatchKKTSystem)`).
+
+@inline pr_diag(kkt::MadNLP.AbstractKKTSystem) = kkt.pr_diag
+@inline du_diag(kkt::MadNLP.AbstractKKTSystem) = kkt.du_diag
+
 # ---------- scalar ----------
 
 function set_aug_diagonal_reg!(kkt::MadNLP.AbstractKKTSystem{T}, solver::MPCSolver{T}) where {T}

@@ -1,35 +1,41 @@
 # Solver initialization: warm-start primal/dual variables and prepare
-# scratch state. Stays specialized: scalar uses `axpy!`/scalar arithmetic
-# and reads single buffers; batch uses broadcast / `batch_mapreduce!` and
-# manages active-set bookkeeping.
+# scratch state. The first half (factorize + two LS solves + initial zl
+# from A'y + c) is unified across scalar and batch via accessors. The
+# second half — Mehrotra's per-instance shifts (δx / δz) — stays
+# specialized because scalar uses scalar `min` / `dot` / `sum` while batch
+# uses per-column `batch_mapreduce!`.
+
+function _init_starting_point_solve!(s::AnyMPCSolver)
+    kkt = _kkt(s)
+    kkt.reg .= _del_w(s)
+    pr_diag(kkt) .= _del_w(s)
+    du_diag(kkt) .= _del_c(s)
+
+    MadNLP.factorize_wrapper!(s)
+
+    set_initial_primal_rhs!(s)
+    solve_system!(_d(s), s, _p(s))
+    MadNLP.primal(_x(s)) .+= MadNLP.primal(_d(s))
+
+    set_initial_dual_rhs!(s)
+    solve_system!(_d(s), s, _p(s))
+    _y(s) .= MadNLP.dual(_d(s))
+
+    res = _jacl(s)
+    MadNLP.jtprod!(res, kkt, s.state.y)
+    res .+= MadNLP.primal(_f(s))
+    MadNLP.full(_zl(s)) .= res
+    return
+end
 
 # ---------- scalar ----------
 
 function init_starting_point!(solver::MPCSolver)
-    problem = solver.problem
     state = solver.state
     T = eltype(state.y)
+    _init_starting_point_solve!(solver)
     x = MadNLP.primal(state.x)
     z = state.zl_r
-    res = state.jacl
-
-    problem.kkt.reg .= state.del_w
-    problem.kkt.pr_diag .= state.del_w
-    problem.kkt.du_diag .= state.del_c
-
-    MadNLP.factorize_wrapper!(solver)
-
-    set_initial_primal_rhs!(solver)
-    solve_system!(state.d, solver, state.p)
-    axpy!(one(T), MadNLP.primal(state.d), x)
-
-    set_initial_dual_rhs!(solver)
-    solve_system!(state.d, solver, state.p)
-    state.y .= MadNLP.dual(state.d)
-
-    MadNLP.jtprod!(res, problem.kkt, state.y)
-    axpy!(one(T), MadNLP.primal(state.f), res)
-    copyto!(state.zl.values, res)
 
     delta_x = max(zero(T), -T(1.5) * minimum(x; init = zero(T)))
     delta_z = max(zero(T), -T(1.5) * minimum(z; init = zero(T)))
@@ -82,29 +88,9 @@ end
 
 function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
     state = batch_solver.state
-    bkkt = batch_solver.problem.kkt
+    _init_starting_point_solve!(batch_solver)
     x = MadNLP.primal(state.x)             # (n_tot, bs)
     z = lower(state.zl)                    # (nlb=n_tot, bs)
-    res = MadNLP.full(state.jacl)
-
-    bkkt.reg .= state.del_w
-    pr_diag(bkkt) .= state.del_w
-    du_diag(bkkt) .= state.del_c
-
-    MadNLP.factorize_wrapper!(batch_solver)
-
-    set_initial_primal_rhs!(batch_solver)
-    solve_system!(state.d, batch_solver, state.p)
-    x .+= MadNLP.primal(state.d)
-
-    set_initial_dual_rhs!(batch_solver)
-    solve_system!(state.d, batch_solver, state.p)
-    MadNLP.full(state.y) .= MadNLP.dual(state.d)
-
-    MadNLP.jtprod!(res, bkkt, state.y)
-    res .+= MadNLP.primal(state.f)
-    copyto!(MadNLP.full(state.zl), res)
-
     ws = state.workspace
     delta_x  = ws.alpha_xl   # (1, bs) scratch
     delta_z  = ws.alpha_xu
