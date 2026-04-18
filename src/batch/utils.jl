@@ -15,14 +15,24 @@ function zero_inactive_step!(batch_solver::AbstractBatchMPCSolver{T}) where T
 end
 
 function _build_batch_op(nzVals, nz_map, val_map, coo_I, nrows)
-    rowptr, colidx = BatchQuadraticModels._coo_to_csr(Vector{Int}(coo_I), nrows)
+    coo_I_int = _as_int_vec(coo_I)
+    rowptr, colidx = BatchQuadraticModels._coo_to_csr(coo_I_int, nrows)
     return BatchQuadraticModels._build_op(
         nzVals,
         rowptr,
-        Vector{Int}(nz_map),
-        Vector{Int}(val_map),
+        _as_int_vec(nz_map),
+        _as_int_vec(val_map),
         colidx,
     )
+end
+
+# Converts an integer vector to element type Int while preserving the device
+# (CPU vector stays CPU; CuVector stays GPU). No-op when already Int-typed.
+@inline _as_int_vec(v::AbstractVector{Int}) = v
+@inline function _as_int_vec(v::AbstractVector)
+    out = similar(v, Int)
+    out .= v
+    return out
 end
 
 function _build_jt_op(
