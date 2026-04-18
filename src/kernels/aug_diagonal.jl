@@ -34,27 +34,40 @@ function set_aug_diagonal_reg!(kkt::AbstractBatchKKTSystem, s::AbstractBatchMPCS
     end
 end
 
+# Same math, different storage convention:
+#   * basic / batch KKT store `l_diag = xl - x` (≤ 0) and `u_diag = x - xu`
+#     (≤ 0); the lb / ub pr_diag updates flow through `_finalize_aug_diagonal!`.
+#   * `MadNLP.ScaledSparseKKTSystem` expects the positive convention
+#     `l_diag = x - xl`, `u_diag = xu - x`, and its `_set_aug_diagonal!`
+#     handles the (different) pr_diag layout with the scaling factor.
+@inline _aug_l_diag_sign(::MadNLP.AbstractKKTSystem)      = -1
+@inline _aug_u_diag_sign(::MadNLP.AbstractKKTSystem)      = -1
+@inline _aug_l_diag_sign(::MadNLP.ScaledSparseKKTSystem)  = +1
+@inline _aug_u_diag_sign(::MadNLP.ScaledSparseKKTSystem)  = +1
+
 function _set_aug_diagonal_reg_unmasked!(kkt, s::AnyMPCSolver)
     kkt.reg .= _del_w(s)
     du_diag(kkt) .= _del_c(s)
-    kkt.l_diag .= _xl_r(s) .- _x_lr(s)
-    kkt.u_diag .= _x_ur(s) .- _xu_r(s)
+    sl = _aug_l_diag_sign(kkt)
+    su = _aug_u_diag_sign(kkt)
+    kkt.l_diag .= sl .* (_x_lr(s) .- _xl_r(s))
+    kkt.u_diag .= su .* (_xu_r(s) .- _x_ur(s))
     kkt.l_lower .= _zl_r(s)
     kkt.u_lower .= _zu_r(s)
+    _finalize_aug_diagonal!(kkt, s)
+    return
+end
+
+@inline function _finalize_aug_diagonal!(kkt::MadNLP.AbstractKKTSystem, s::AnyMPCSolver)
     pr_diag(kkt) .= kkt.reg
     _pr_diag_lb_view(kkt, s) .-= kkt.l_lower ./ kkt.l_diag
     _pr_diag_ub_view(kkt, s) .-= kkt.u_lower ./ kkt.u_diag
     return
 end
 
-# ---------- scalar (Scaled-KKT specialization) ----------
-
-function set_aug_diagonal_reg!(kkt::MadNLP.ScaledSparseKKTSystem{T}, solver::MPCSolver{T}) where {T}
-    state = solver.state
-    fill!(kkt.reg, state.del_w)
-    fill!(kkt.du_diag, state.del_c)
-    kkt.l_diag .= state.x_lr
-    copyto!(kkt.l_lower, state.zl_r)
+@inline function _finalize_aug_diagonal!(kkt::MadNLP.ScaledSparseKKTSystem, ::AnyMPCSolver)
+    # Delegates to MadNLP's scaled implementation: it lays out `pr_diag`
+    # itself (computing scaling_factor and the scaled regularization).
     MadNLP._set_aug_diagonal!(kkt)
     return
 end
