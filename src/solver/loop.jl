@@ -31,13 +31,17 @@ end
     return
 end
 
-function evaluate_model!(solver::MPCSolver)
-    problem = solver.problem
+function evaluate_model!(s::AnyMPCSolver)
+    _evaluate_model_calls!(s)
+    MadNLP.jtprod!(_jacl(s), _kkt(s), s.state.y)
+    return
+end
+
+@inline function _evaluate_model_calls!(solver::MPCSolver)
     state = solver.state
     state.obj_val = MadNLP.eval_f_wrapper(solver, state.x)
     MadNLP.eval_cons_wrapper!(solver, state.c, state.x)
     MadNLP.eval_grad_f_wrapper!(solver, state.f, state.x)
-    MadNLP.jtprod!(state.jacl, problem.kkt, state.y)
     return
 end
 
@@ -96,16 +100,14 @@ end
     return
 end
 
-function evaluate_model!(batch_solver::AbstractBatchMPCSolver)
+@inline function _evaluate_model_calls!(batch_solver::AbstractBatchMPCSolver)
     state = batch_solver.state
-    problem = batch_solver.problem
-    ws = state.workspace
-    bcb = problem.bcb
-    MadNLP.unpack_x!(ws.bx, bcb, state.x)
-    MadNLP.eval_f_wrapper(batch_solver, ws.bx)
-    MadNLP.eval_cons_wrapper!(batch_solver, ws.bx)
-    MadNLP.eval_grad_f_wrapper!(batch_solver, ws.bx)
-    MadNLP.jtprod!(state.jacl, problem.kkt, state.y)
+    bcb = batch_solver.problem.bcb
+    bx = state.workspace.bx
+    MadNLP.unpack_x!(bx, bcb, state.x)
+    MadNLP.eval_f_wrapper(batch_solver, bx)
+    MadNLP.eval_cons_wrapper!(batch_solver, bx)
+    MadNLP.eval_grad_f_wrapper!(batch_solver, bx)
     return
 end
 
