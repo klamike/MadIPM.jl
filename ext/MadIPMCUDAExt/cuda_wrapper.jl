@@ -149,3 +149,69 @@ MadIPM.sparse_csc_format(::Type{<:CuArray}) = CuSparseMatrixCSC
 MadIPM._colptr(A::CuSparseMatrixCSC) = A.colPtr
 MadIPM._rowval(A::CuSparseMatrixCSC) = A.rowVal
 MadIPM._nzval(A::CuSparseMatrixCSC) = A.nzVal
+
+# ===== Batch NormalKKTSystem GPU dispatches =====
+
+# Per-column normal-matrix build using existing scalar GPU kernel.
+function MadNLP.build_kkt!(
+    bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT},
+) where {T, LS, MT <: CuMatrix{T}}
+    AT = bkkt.AT  # CuSparseMatrixCSC
+    Ap = AT.colPtr; Aj = AT.rowVal
+    AAp = bkkt.aug_com.colPtr; AAj = bkkt.aug_com.rowVal
+    n_tot = bkkt.n_tot; m = bkkt.m
+    # AT.nzVal is shared across columns; per-instance Ax view uses A_vals.
+    @inbounds for k in 1:bkkt.batch_size
+        # Per-instance AT nzval: walk via A_csr_map to pull values from A_vals[:, k].
+        Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
+        # Per-instance D = 1 / pr_diag.
+        D_k = view(bkkt.r_primal, :, k)
+        @. D_k = one(T) / view(bkkt.pr_diag, :, k)
+        Cx_k = view(bkkt.aug_com_nzvals, :, k)
+        MadIPM.assemble_normal_system!(m, n_tot, Ap, Aj, Ax_k, AAp, AAj, Cx_k, D_k)
+        # Subtract du_diag from diagonal of normal matrix.
+        # GPU diagonal subtract: use scalar indexing wrapped in @allowscalar (small m).
+        CUDA.@allowscalar for i in 1:m
+            for p in AAp[i]:(AAp[i + 1] - 1)
+                if AAj[p] == i
+                    Cx_k[p] -= bkkt.du_diag[i, k]
+                    break
+                end
+            end
+        end
+    end
+    return
+end
+
+# `MadNLP.jtprod!` for batch NormalKKT on GPU: loops per column and uses
+# CUSPARSE SpMV (reusing the per-column view of A_vals into AT.nzVal).
+function MadNLP.jtprod!(
+    res::CuMatrix{T}, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT}, y,
+) where {T, LS, MT <: CuMatrix{T}}
+    yfull = y isa MadIPM.BatchVector ? MadNLP.full(y) : y
+    fill!(res, zero(T))
+    @inbounds for k in 1:bkkt.batch_size
+        Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
+        AT_k = CUSPARSE.CuSparseMatrixCSC(bkkt.AT.colPtr, bkkt.AT.rowVal, Ax_k, size(bkkt.AT))
+        mul!(view(res, :, k), AT_k, view(yfull, :, k), one(T), one(T))
+    end
+    return res
+end
+
+MadNLP.jtprod!(jacl::MadIPM.BatchVector, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT}, y) where {T, LS, MT <: CuMatrix{T}} =
+    (MadNLP.jtprod!(MadNLP.full(jacl), bkkt, y); jacl)
+
+# `_batch_mul_A!` GPU: y = α A * x + β y per column.
+function MadIPM._batch_mul_A!(
+    y::CuMatrix{T}, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT},
+    x::CuMatrix{T}, alpha, beta,
+) where {T, LS, MT <: CuMatrix{T}}
+    if iszero(beta); fill!(y, zero(T)); else; @. y *= beta; end
+    @inbounds for k in 1:bkkt.batch_size
+        Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
+        AT_k = CUSPARSE.CuSparseMatrixCSC(bkkt.AT.colPtr, bkkt.AT.rowVal, Ax_k, size(bkkt.AT))
+        # mul!(y, A, x) where A = AT' so transpose.
+        mul!(view(y, :, k), transpose(AT_k), view(x, :, k), alpha, one(T))
+    end
+    return y
+end

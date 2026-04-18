@@ -6,15 +6,15 @@
 # (AAp, AAj), A_csr_map. Per-instance: jac values, pr_diag/du_diag, bound
 # multipliers, normal-matrix nzvals, RHS buffers.
 
-struct NormalUniformBatchKKTSystem{T, LS, MT, VT, VI, VI32, BVS} <: AbstractBatchKKTSystem{T}
+struct NormalUniformBatchKKTSystem{T, LS, MT, VT, VI, VI32, ATC, AUGC, BVS} <: AbstractBatchKKTSystem{T}
     # Jacobian (shared structure, per-instance values)
     A::MadNLP.SparseMatrixCOO{T, Int32, VT, VI32}  # (m, n_tot) with slack column; V is col 1
     A_vals::MT                                     # (nnzj + n_slack, bs) per-instance
-    AT::SparseArrays.SparseMatrixCSC{T, Int}       # shared structure, col 1 values
+    AT::ATC                                        # shared structure (CSC; CPU or CuSparseMatrixCSC)
     A_csr_map::VI
     jac_coo_view::VT                               # view into A.V for the non-slack block
     # Normal matrix: shared structure, per-instance values
-    aug_com::SparseArrays.SparseMatrixCSC{T, Int}  # m × m, values for col 1
+    aug_com::AUGC                                  # m × m CSC (col 1 values used for symbolic factor)
     aug_com_nzvals::MT                             # (nnz_normal, bs)
     # Linear solver (looped over batch columns of aug_com_nzvals)
     batch_solver::LS
@@ -27,7 +27,9 @@ struct NormalUniformBatchKKTSystem{T, LS, MT, VT, VI, VI32, BVS} <: AbstractBatc
     pr_diag::MT                                    # (n_tot, bs)
     du_diag::MT                                    # (m, bs)
     l_diag::MT
+    u_diag::MT                                     # (nub, bs); empty for std-form
     l_lower::MT
+    u_lower::MT
     # Metadata
     batch_size::Int
     batch_views::BVS
@@ -75,8 +77,12 @@ function MadNLP.create_kkt_system(
     V .= 1:(nnzj + n_slack)
     Ap, Aj, Ax = coo_to_csr(A_coo)
     A_csr_map = convert.(Int, Ax)
-    # AT stored CSC (n_tot × m) — structure shared, values from column 1.
-    AT = SparseArrays.SparseMatrixCSC(n_tot, m, Ap, Aj, Ax)
+
+    # CSC type: SparseMatrixCSC on CPU, CuSparseMatrixCSC on GPU. Picked from VT.
+    CSC = sparse_csc_format(VT)
+    AT = CSC <: SparseArrays.SparseMatrixCSC ?
+        CSC(n_tot, m, Ap, Aj, Ax) :
+        CSC(Ap, Aj, Ax, (n_tot, m))
 
     # Normal-matrix sparsity: (AAp, AAj) structure shared, per-instance nzvals.
     AAp, AAj = build_normal_system(m, n_tot, Ap, Aj)
@@ -84,7 +90,9 @@ function MadNLP.create_kkt_system(
     aug_com_nzvals = similar(A_vals, nnz_normal, batch_size)
     fill!(aug_com_nzvals, zero(T))
     AAx_ref = _madnlp_unsafe_column_wrap(aug_com_nzvals, nnz_normal, 1, VT)
-    aug_com = SparseArrays.SparseMatrixCSC(m, m, AAp, AAj, AAx_ref)
+    aug_com = CSC <: SparseArrays.SparseMatrixCSC ?
+        CSC(m, m, AAp, AAj, AAx_ref) :
+        CSC(AAp, AAj, AAx_ref, (m, m))
 
     # Looped batch linear solver over aug_com_nzvals.
     batch_solver = uniformbatch_linear_solver(aug_com, aug_com_nzvals, m; opt = opt_linear_solver)
@@ -101,14 +109,17 @@ function MadNLP.create_kkt_system(
     pr_diag = similar(A_vals, n_tot, batch_size)
     du_diag = similar(A_vals, m, batch_size)
     nlb = length(bcb.ind_lb)
+    nub = length(bcb.ind_ub)
     l_diag  = similar(A_vals, nlb, batch_size)
+    u_diag  = similar(A_vals, nub, batch_size)
     l_lower = similar(A_vals, nlb, batch_size)
+    u_lower = similar(A_vals, nub, batch_size)
 
-    return NormalUniformBatchKKTSystem{T, typeof(batch_solver), MT, VT, VI, typeof(I), typeof(batch_views)}(
+    return NormalUniformBatchKKTSystem{T, typeof(batch_solver), MT, VT, VI, typeof(I), typeof(AT), typeof(aug_com), typeof(batch_views)}(
         A_coo, A_vals, AT, A_csr_map, jac_coo_view,
         aug_com, aug_com_nzvals, batch_solver,
         rhs_buffer, r_primal, r_dual,
-        reg, pr_diag, du_diag, l_diag, l_lower,
+        reg, pr_diag, du_diag, l_diag, u_diag, l_lower, u_lower,
         batch_size, batch_views, n_tot, m,
         bcb.ind_ineq, bcb.ind_lb, bcb.ind_ub,
     )
@@ -125,6 +136,8 @@ function MadNLP.initialize!(bkkt::NormalUniformBatchKKTSystem{T}) where {T}
     fill!(bkkt.reg, one(T))
     fill!(bkkt.pr_diag, one(T))
     fill!(bkkt.du_diag, zero(T))
+    fill!(bkkt.u_lower, zero(T))
+    fill!(bkkt.u_diag, one(T))
     fill!(bkkt.l_lower, zero(T))
     fill!(bkkt.l_diag, one(T))
     fill!(bkkt.r_dual, zero(T))
@@ -258,7 +271,7 @@ function MadNLP.solve_kkt!(bkkt::NormalUniformBatchKKTSystem{T}, batch_solver::A
     d = batch_solver.d
     # Reduce lb/ub rows of the unreduced vector into the primal block.
     lb_off = d.n + d.m
-    _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag)
+    _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag, d.ind_ub, lb_off + d.nlb, bkkt.u_diag)
 
     wx_mat = reshape(view(d.values, 1:bkkt.n_tot, :), bkkt.n_tot, size(d.values, 2))
     wy_mat = reshape(view(d.values, bkkt.n_tot + 1 : bkkt.n_tot + bkkt.m, :), bkkt.m, size(d.values, 2))
@@ -317,14 +330,14 @@ end
 
 function MadNLP.reduce_rhs!(bkkt::NormalUniformBatchKKTSystem, d::BatchUnreducedKKTVector)
     lb_off = d.n + d.m
-    _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag)
+    _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag, d.ind_ub, lb_off + d.nlb, bkkt.u_diag)
     return
 end
 
 function MadNLP.finish_aug_solve!(bkkt::NormalUniformBatchKKTSystem, batch_solver::AbstractBatchMPCSolver)
     d = batch_solver.d
     lb_off = d.n + d.m
-    _finish_aug_solve_batch!(d.values, d.ind_lb, lb_off, bkkt.l_lower, bkkt.l_diag)
+    _finish_aug_solve_batch!(d.values, d.ind_lb, lb_off, bkkt.l_lower, bkkt.l_diag, d.ind_ub, lb_off + d.nlb, bkkt.u_lower, bkkt.u_diag)
     return
 end
 
@@ -353,6 +366,6 @@ function LinearAlgebra.mul!(
     _batch_mul_A!(wd, bkkt, xp, alpha, beta)
     @. wd -= alpha * bkkt.du_diag * xd
 
-    _kktmul!(w, x, bkkt.reg, bkkt.du_diag, bkkt.l_lower, bkkt.l_diag, alpha, beta)
+    _kktmul!(w, x, bkkt.reg, bkkt.du_diag, bkkt.l_lower, bkkt.u_lower, bkkt.l_diag, bkkt.u_diag, alpha, beta)
     return w
 end

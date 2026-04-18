@@ -1,14 +1,17 @@
-function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where {T}
+function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
     bkkt = batch_solver.kkt
-    ws   = batch_solver.workspace
-    nlb  = batch_solver.d.nlb
+    bs = batch_solver.batch_size
+    n = batch_solver.d.n
+    m = batch_solver.d.m
 
-    bx, bxl, bzl = batch_solver.x, batch_solver.xl, batch_solver.zl
+    bx, bxl, bxu = batch_solver.x, batch_solver.xl, batch_solver.xu
+    bzl, bzu = batch_solver.zl, batch_solver.zu
     x = MadNLP.primal(bx)
-    xl = lower(bx)
-    lb = lower(bxl)
-    zl = lower(bzl)
-    # use jacl as a scratch buffer for Aᵀ y + c
+    l, u = MadNLP.full(bxl), MadNLP.full(bxu)
+    lb, ub = lower(bxl), upper(bxu)
+    zl, zu = lower(bzl), upper(bzu)
+    xl, xu = lower(bx), upper(bx)
+    # use jacl as a buffer
     res = MadNLP.full(batch_solver.jacl)
 
     # Add initial primal-dual regularization
@@ -16,78 +19,163 @@ function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where {T}
     pr_diag(bkkt) .= batch_solver.del_w
     du_diag(bkkt) .= batch_solver.del_c
 
-    # Step 0: factorize initial KKT.
+    # Step 0: factorize initial KKT system
     MadNLP.factorize_wrapper!(batch_solver)
 
-    # Step 1: least-squares primal correction. A dx = b - A x.
+    # Step 1: Compute initial primal variable as x0 = x + dx, with dx the
+    #         least square solution of the system A * dx = (b - A*x)
     set_initial_primal_rhs!(batch_solver)
     solve_system!(batch_solver.d, batch_solver, batch_solver.p)
+    # x0 = x + dx
     x .+= MadNLP.primal(batch_solver.d)
 
-    # Step 2: least-squares dual correction. Aᵀ y = -c.
+    # Step 2: Compute initial dual variable as the least square solution of A' * y = -f
     set_initial_dual_rhs!(batch_solver)
     solve_system!(batch_solver.d, batch_solver, batch_solver.p)
     MadNLP.full(batch_solver.y) .= MadNLP.dual(batch_solver.d)
 
-    # Step 3: zl = Aᵀ y + c  (since c + Aᵀ y - zl = 0 in std form, no zu).
+    # Step 3: init bounds multipliers using c + A' * y - zl + zu = 0
+    # A' * y
     MadNLP.jtprod!(res, bkkt, batch_solver.y)
+    # A'*y + c
     res .+= MadNLP.primal(batch_solver.f)
-    MadNLP.full(bzl) .= res
+    # Initialize bounds multipliers
+    map!(
+        (r_, l_, u_, zl_) -> begin
+            val = if isfinite(l_) && isfinite(u_)
+                0.5 * r_
+            elseif isfinite(l_)
+                r_
+            else
+                zl_
+            end
+            val
+        end,
+        MadNLP.full(batch_solver.zl), res, l, u, MadNLP.full(batch_solver.zl),
+    )
+    map!(
+        (r_, l_, u_, zu_) -> begin
+            val = if isfinite(l_) && isfinite(u_)
+                -0.5 * r_
+            elseif isfinite(u_)
+                -r_
+            else
+                zu_
+            end
+            val
+        end,
+        MadNLP.full(batch_solver.zu), res, l, u, MadNLP.full(batch_solver.zu),
+    )
 
+    ws = batch_solver.workspace
+    nlb_init, nub_init = batch_solver.d.nlb, batch_solver.d.nub
+    bs = batch_solver.batch_size
     _s1 = ws.alpha_xl  # (1,bs) scratch
-    # δ_x = max(0, -1.5 * min(xl - lb, 0)); note xl - lb corresponds to x - lvar on std form.
-    if nlb > 0
+    _s2 = ws.alpha_xu  # (1,bs) scratch
+
+    # delta_x = max(0, -1.5 * min(xl-lb, 0), -1.5 * min(ub-xu, 0))
+    if nlb_init > 0
         batch_mapreduce!(-, min, T(Inf), _s1, xl, lb)
         @. _s1 = min(_s1, zero(T))
     else
         fill!(_s1, zero(T))
     end
-    delta_x = ws.mu_batch
-    @. delta_x = max(zero(T), T(-1.5) * _s1)
+    if nub_init > 0
+        batch_mapreduce!(-, min, T(Inf), _s2, ub, xu)
+        @. _s2 = min(_s2, zero(T))
+    else
+        fill!(_s2, zero(T))
+    end
+    delta_x = ws.mu_batch  # (1,bs) scratch
+    @. delta_x = max(zero(T), T(-1.5) * _s1, T(-1.5) * _s2)
 
-    # δ_z = max(0, -1.5 * min(zl, 0))
-    if nlb > 0
+    # delta_s = max(0, -1.5 * min(zl, 0), -1.5 * min(zu, 0))
+    if nlb_init > 0
         batch_mapreduce!(identity, min, T(Inf), _s1, zl)
         @. _s1 = min(_s1, zero(T))
     else
         fill!(_s1, zero(T))
     end
-    delta_z = ws.mu_curr
-    @. delta_z = max(zero(T), T(-1.5) * _s1)
+    if nub_init > 0
+        batch_mapreduce!(identity, min, T(Inf), _s2, zu)
+        @. _s2 = min(_s2, zero(T))
+    else
+        fill!(_s2, zero(T))
+    end
+    delta_s = ws.mu_curr  # (1,bs) scratch
+    @. delta_s = max(zero(T), T(-1.5) * _s1, T(-1.5) * _s2)
 
     xl .+= delta_x
-    zl .+= one(T) .+ delta_z
+    xu .-= delta_x
+    zl .+= 1.0 .+ delta_s
+    zu .+= 1.0 .+ delta_s
 
-    # μ = sum((xl - lb) * zl)  — LB-only
-    μ = ws.mu_affine
+    # μ = sum((xl-lb)*zl) + sum((ub-xu)*zu)
+    μ = ws.mu_affine  # (1,bs) scratch
     fill!(μ, zero(T))
-    if nlb > 0
+    if nlb_init > 0
         batch_mapreduce!((a, b) -> a * b, +, zero(T), ws.sum_lb, xl, zl)
         μ .+= ws.sum_lb
         batch_mapreduce!((a, b) -> a * b, +, zero(T), ws.sum_lb, lb, zl)
         μ .-= ws.sum_lb
     end
+    if nub_init > 0
+        batch_mapreduce!((a, b) -> a * b, +, zero(T), ws.sum_ub, ub, zu)
+        batch_mapreduce!((a, b) -> a * b, +, zero(T), ws.sum_lb, xu, zu)
+        ws.sum_ub .-= ws.sum_lb
+        μ .+= ws.sum_ub
+    end
 
-    # δ_x2 = μ / (2 * sum(zl))
-    if nlb > 0
+    # delta_x2 = μ / (2 * (sum(zl) + sum(zu)))
+    if nlb_init > 0
         batch_mapreduce!(identity, +, zero(T), ws.sum_lb, zl)
     else
         fill!(ws.sum_lb, zero(T))
     end
-    delta_x2 = _s1
-    @. delta_x2 = μ / (2 * ws.sum_lb + eps(T))
+    if nub_init > 0
+        batch_mapreduce!(identity, +, zero(T), ws.sum_ub, zu)
+    else
+        fill!(ws.sum_ub, zero(T))
+    end
+    delta_x2 = _s1  # reuse (1,bs) scratch
+    @. delta_x2 = μ / (2 * (ws.sum_lb + ws.sum_ub))
 
-    # δ_z2 = μ / (2 * sum(xl - lb))
-    if nlb > 0
+    # delta_s2 = μ / (2 * (sum(xl-lb) + sum(ub-xu)))
+    if nlb_init > 0
         batch_mapreduce!(-, +, zero(T), ws.sum_lb, xl, lb)
     else
         fill!(ws.sum_lb, zero(T))
     end
-    delta_z2 = ws.alpha_zl
-    @. delta_z2 = μ / (2 * ws.sum_lb + eps(T))
+    if nub_init > 0
+        batch_mapreduce!(-, +, zero(T), ws.sum_ub, ub, xu)
+    else
+        fill!(ws.sum_ub, zero(T))
+    end
+    delta_s2 = _s2  # reuse (1,bs) scratch
+    @. delta_s2 = μ / (2 * (ws.sum_lb + ws.sum_ub))
 
     xl .+= delta_x2
-    zl .+= delta_z2
+    xu .-= delta_x2
+    zl .+= delta_s2
+    zu .+= delta_s2
+
+    # Use Ipopt's heuristic to project x back on the interval [l, u]
+    kappa = batch_solver.opt.bound_fac
+    map!(
+        (l_, u_, x_) -> begin
+            out = if x_ < l_
+                pl = min(kappa * max(1.0, l_), kappa * (u_ - l_))
+                l_ + pl
+            elseif u_ < x_
+                pu = min(kappa * max(1.0, u_), kappa * (u_ - l_))
+                u_ - pu
+            else
+                x_
+            end
+            out
+        end,
+        x, l, u, x,
+    )
     return
 end
 
@@ -100,6 +188,7 @@ function initialize!(batch_solver::AbstractBatchMPCSolver{T}) where T
         bcb,
         batch_solver.x,
         batch_solver.xl,
+        batch_solver.xu,
         MadNLP.full(batch_solver.y),
         MadNLP.full(batch_solver.rhs),
         bcb.ind_ineq,
@@ -115,6 +204,7 @@ function initialize!(batch_solver::AbstractBatchMPCSolver{T}) where T
             bcb,
             batch_solver.x,
             batch_solver.xl,
+            batch_solver.xu,
             MadNLP.full(batch_solver.y),
             MadNLP.full(batch_solver.rhs),
             bcb.ind_ineq,
@@ -201,23 +291,27 @@ end
 function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) where T
     ws = batch_solver.workspace
     opt = batch_solver.opt
-    x, xl = batch_solver.x, batch_solver.xl
-    zl = batch_solver.zl
-    nlb = batch_solver.d.nlb
+    bcnt = batch_solver.batch_cnt
+    x, xl, xu = batch_solver.x, batch_solver.xl, batch_solver.xu
+    zl, zu = batch_solver.zl, batch_solver.zu
+    bs = batch_solver.batch_size
+    nlb, nub = batch_solver.d.nlb, batch_solver.d.nub
 
     get_inf_pr!(ws.inf_pr, MadNLP.full(batch_solver.c))
     @. ws.inf_pr /= max(one(T), ws.norm_b)
 
     get_inf_du!(ws.inf_du, MadNLP.full(batch_solver.f), MadNLP.full(zl),
-                MadNLP.full(batch_solver.jacl))
+                MadNLP.full(zu), MadNLP.full(batch_solver.jacl))
     @. ws.inf_du /= max(one(T), ws.norm_c)
 
-    get_inf_compl_lb!(ws.inf_compl, x, xl, zl, ws.sum_lb, nlb)
+    get_inf_compl!(ws.inf_compl, x, xl, zl, xu, zu,
+        ws.sum_lb, ws.sum_ub, nlb, nub)
     @. ws.inf_compl /= max(one(T), ws.norm_c)
     @. ws.best_complementarity = min(ws.best_complementarity, ws.inf_compl)
 
     dual_objective!(ws.dual_obj, MadNLP.full(batch_solver.y), MadNLP.full(batch_solver.rhs),
-        lower(zl), lower(xl), ws.sum_lb, nlb)
+        lower(zl), lower(xl), upper(zu), upper(xu),
+        ws.sum_lb, ws.sum_ub, nlb, nub)
 
     compute_term_gpu!(ws, opt)
     return
@@ -296,7 +390,7 @@ end
 function update_solution!(stats::BatchExecutionStats, batch_solver::AbstractBatchMPCSolver)
     ws = batch_solver.workspace
     bcb = batch_solver.bcb
-    x, zl = batch_solver.x, batch_solver.zl
+    x, zl, zu = batch_solver.x, batch_solver.zl, batch_solver.zu
 
     stats.status .= ws.status
     stats.iter .= batch_solver.batch_cnt.k
@@ -304,7 +398,7 @@ function update_solution!(stats::BatchExecutionStats, batch_solver::AbstractBatc
     MadNLP.unpack_x!(stats.solution, bcb, x)
     MadNLP.unpack_y!(stats.multipliers, bcb, MadNLP.full(batch_solver.y))
     MadNLP.unpack_z!(stats.multipliers_L, bcb, MadNLP.variable(zl))
-    fill!(stats.multipliers_U, zero(eltype(stats.multipliers_U)))
+    MadNLP.unpack_z!(stats.multipliers_U, bcb, MadNLP.variable(zu))
     unpack_obj!(stats.objective, bcb, ws.obj_val)
     MadNLP.unpack_cons!(stats.constraints, bcb, MadNLP.full(batch_solver.c), MadNLP.full(batch_solver.rhs), bcb.ind_ineq, MadNLP.slack(x))
 
@@ -327,13 +421,13 @@ function prediction_step!(solver::AbstractBatchMPCSolver)
     get_fraction_to_boundary_step!(solver)
     zero_inactive_step!(solver)
     get_affine_complementarity_measure!(solver, ws.alpha_p, ws.alpha_d)
-    get_correction!(solver, MadNLP.full(solver.correction_lb))
+    get_correction!(solver, MadNLP.full(solver.correction_lb), MadNLP.full(solver.correction_ub))
     update_barrier!(solver.barrier_update, solver, ws.mu_affine)
     return
 end
 
 function mehrotra_correction_direction!(solver::AbstractBatchMPCSolver)
-    set_correction_rhs!(solver, solver.kkt, solver.workspace.mu_batch, MadNLP.full(solver.correction_lb), nothing)
+    set_correction_rhs!(solver, solver.kkt, solver.workspace.mu_batch, MadNLP.full(solver.correction_lb), MadNLP.full(solver.correction_ub), nothing, nothing)
     solve_system!(solver.d, solver, solver.p)
     return
 end
@@ -380,17 +474,27 @@ end
 
 function apply_step!(batch_solver::AbstractBatchMPCSolver)
     ws = batch_solver.workspace
-    x, y, xl = batch_solver.x, batch_solver.y, batch_solver.xl
-    zl, d = batch_solver.zl, batch_solver.d
-    nlb = d.nlb
+    x, y, xl, xu = batch_solver.x, batch_solver.y, batch_solver.xl, batch_solver.xu
+    zl, zu, d = batch_solver.zl, batch_solver.zu, batch_solver.d
+    batch_size = batch_solver.batch_size
+    nlb, nub = d.nlb, d.nub
 
+    # x += alpha_p * dx
     MadNLP.full(x) .+= ws.alpha_p .* MadNLP.primal(d)
+
+    # y += alpha_d * d_dual
     MadNLP.full(y) .+= ws.alpha_d .* MadNLP.dual(d)
+
+    # zl_r += alpha_d * dzl, zu_r += alpha_d * dzu
     if nlb > 0
         lower(zl) .+= ws.alpha_d .* MadNLP.dual_lb(d)
     end
-    _adjust_boundary_active!(lower(x), lower(xl), ws.mu_batch, ws.active_mask)
-    increment_k!(batch_solver)
+    if nub > 0
+        upper(zu) .+= ws.alpha_d .* MadNLP.dual_ub(d)
+    end
+
+    _adjust_boundary_active!(lower(x), lower(xl), upper(x), upper(xu), ws.mu_batch, ws.active_mask)
+    increment_k!(batch_solver)  # this is CPU work, ends up overlapped
     return
 end
 
