@@ -123,12 +123,10 @@ function madipm_batch(bnlp::ObjRHSBatchQuadraticModel; kwargs...)
     recover_primal!(orig_stats.solution, ws_batch, std_stats.solution)
     recover_variable_multipliers!(orig_stats.multipliers_L, orig_stats.multipliers_U, ws_batch, std_stats.multipliers_L)
     BatchQuadraticModels._batch_gather_dual!(orig_stats.multipliers, ws_batch.con_start.row, std_stats.multipliers)
-    @inbounds for j in axes(orig_stats.solution, 2)
-        orig_stats.dual_feas[j]   = std_stats.dual_feas[j]
-        orig_stats.primal_feas[j] = std_stats.primal_feas[j]
-        orig_stats.iter[j]        = std_stats.iter[j]
-        orig_stats.total_time[j]  = std_stats.total_time[j]
-    end
+    copyto!(orig_stats.dual_feas,   std_stats.dual_feas)
+    copyto!(orig_stats.primal_feas, std_stats.primal_feas)
+    copyto!(orig_stats.iter,        std_stats.iter)
+    copyto!(orig_stats.total_time,  std_stats.total_time)
     # Objective in orig space: std obj already includes c_std' z + 1/2 z'Q z;
     # add the presolve shift ws_batch.c0_batch.
     copyto!(orig_stats.objective, std_stats.objective)
