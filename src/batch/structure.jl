@@ -217,6 +217,11 @@ function UniformBatchMPCSolver(
     step_rule = options.step_rule
     barrier_update = options.barrier_update
 
+    # `linear_solver` is the IPMOptions kwarg the user actually wires; mirror
+    # it onto the per-instance looped solver so e.g. `linear_solver=CUDSSSolver`
+    # on GPU is respected (otherwise opt_batch_ls keeps its CPU default).
+    opt_batch_ls.looped_linear_solver = ipm_opt.linear_solver
+
     cnt = BatchCounters(batch_size)
     bcb = MadNLP.create_callback(
         UniformBatchCallback{T,VT,MT,VI},
