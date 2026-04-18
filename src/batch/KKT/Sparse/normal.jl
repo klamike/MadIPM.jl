@@ -6,13 +6,17 @@
 # (AAp, AAj), A_csr_map. Per-instance: jac values, pr_diag/du_diag, bound
 # multipliers, normal-matrix nzvals, RHS buffers.
 
-struct NormalUniformBatchKKTSystem{T, LS, MT, VT, VI, VI32, ATC, AUGC, BVS} <: AbstractBatchKKTSystem{T}
+struct NormalUniformBatchKKTSystem{T, LS, MT, VT, VI, VI32, ATC, AUGC, OPT, BVS} <: AbstractBatchKKTSystem{T}
     # Jacobian (shared structure, per-instance values)
     A::MadNLP.SparseMatrixCOO{T, Int32, VT, VI32}  # (m, n_tot) with slack column; V is col 1
     A_vals::MT                                     # (nnzj + n_slack, bs) per-instance
     AT::ATC                                        # shared structure (CSC; CPU or CuSparseMatrixCSC)
     A_csr_map::VI
     jac_coo_view::VT                               # view into A.V for the non-slack block
+    # Batched SpMV operators sharing structure with A / A^T but reading
+    # per-instance nzvals out of A_vals: `j_op` ↦ `A xᵏ`, `jt_op` ↦ `Aᵀ yᵏ`.
+    j_op::OPT                                      # batch op for A: (n_tot → m)
+    jt_op::OPT                                     # batch op for Aᵀ: (m → n_tot)
     # Normal matrix: shared structure, per-instance values
     aug_com::AUGC                                  # m × m CSC (col 1 values used for symbolic factor)
     aug_com_nzvals::MT                             # (nnz_normal, bs)
@@ -22,12 +26,6 @@ struct NormalUniformBatchKKTSystem{T, LS, MT, VT, VI, VI32, ATC, AUGC, BVS} <: A
     rhs_buffer::MT                                 # ((n_tot + m), bs) for full KKT solves
     r_primal::MT                                   # (n_tot, bs)
     r_dual::MT                                     # (m, bs)
-    # Per-column contiguous CuVector scratch for CUSPARSE mul!. CUSPARSE
-    # rejects strided / wrapped destinations, so the GPU jtprod! /
-    # _batch_mul_A! write here once per loop iteration and copyto! into the
-    # (possibly strided) caller-provided destination column.
-    spmv_n_buf::VT                                 # (n_tot,)
-    spmv_m_buf::VT                                 # (m,)
     # Bound-related diagonals (per-instance)
     reg::MT                                        # (n_tot, bs)
     pr_diag::MT                                    # (n_tot, bs)
@@ -103,6 +101,16 @@ function MadNLP.create_kkt_system(
     # Looped batch linear solver over aug_com_nzvals.
     batch_solver = uniformbatch_linear_solver(aug_com, aug_com_nzvals, m; opt = opt_linear_solver)
 
+    # Build batched A / Aᵀ SpMV operators (shared structure + per-instance
+    # nzvals out of A_vals). For each entry of A_vals, `j_op` accumulates
+    # value × x[A.J] into `out[A.I]`, and `jt_op` accumulates
+    # value × x[A.I] into `out[A.J]`.
+    n_jac_total = nnzj + n_slack
+    nz_id = similar(A_csr_map, n_jac_total)
+    nz_id .= 1:n_jac_total
+    j_op  = _build_batch_op(A_vals, nz_id, J, I, m)
+    jt_op = _build_batch_op(A_vals, nz_id, I, J, n_tot)
+
     # Reset values and carve out a view to the non-slack Jacobian block.
     fill!(V, zero(T))
     jac_coo_view = MadNLP._madnlp_unsafe_wrap(V, nnzj, 1)
@@ -110,8 +118,6 @@ function MadNLP.create_kkt_system(
     rhs_buffer = similar(A_vals, n_tot + m, batch_size)
     r_primal = similar(A_vals, n_tot, batch_size)
     r_dual = similar(A_vals, m, batch_size)
-    spmv_n_buf = similar(A_vals, T, n_tot)
-    spmv_m_buf = similar(A_vals, T, m)
 
     reg     = similar(A_vals, n_tot, batch_size)
     pr_diag = similar(A_vals, n_tot, batch_size)
@@ -123,11 +129,11 @@ function MadNLP.create_kkt_system(
     l_lower = similar(A_vals, nlb, batch_size)
     u_lower = similar(A_vals, nub, batch_size)
 
-    return NormalUniformBatchKKTSystem{T, typeof(batch_solver), MT, VT, VI, typeof(I), typeof(AT), typeof(aug_com), typeof(batch_views)}(
+    return NormalUniformBatchKKTSystem{T, typeof(batch_solver), MT, VT, VI, typeof(I), typeof(AT), typeof(aug_com), typeof(j_op), typeof(batch_views)}(
         A_coo, A_vals, AT, A_csr_map, jac_coo_view,
+        j_op, jt_op,
         aug_com, aug_com_nzvals, batch_solver,
         rhs_buffer, r_primal, r_dual,
-        spmv_n_buf, spmv_m_buf,
         reg, pr_diag, du_diag, l_diag, u_diag, l_lower, u_lower,
         batch_size, batch_views, n_tot, m,
         bcb.ind_ineq, bcb.ind_lb, bcb.ind_ub,
@@ -192,26 +198,13 @@ end
 # No Hessian in LPs.
 MadNLP.eval_lag_hess_wrapper!(::AbstractBatchMPCSolver, ::NormalUniformBatchKKTSystem) = nothing
 
-# `jtprod!` — compute Aᵀ y (or slack-aware Aᵀ) in batch space by looping
-# since A has shared structure but per-instance values.
+# `jtprod!` — compute `Aᵀ y` per instance via the precomputed batched
+# operator `bkkt.jt_op`, which already gathers per-instance values out of
+# `A_vals` and writes contiguous columns of `res` (no per-column SpMV
+# loop, no GPU scratch dance).
 function MadNLP.jtprod!(res::AbstractMatrix{T}, bkkt::NormalUniformBatchKKTSystem{T}, y) where {T}
     yfull = y isa BatchVector ? MadNLP.full(y) : y
-    fill!(res, zero(T))
-    n_tot = bkkt.n_tot
-    # AT has shared structure; apply each instance's Jacobian values via A_csr_map
-    # onto res column by column. A_csr_map[i] maps AT nzval index i → A.V index.
-    Ap = SparseArrays.getcolptr(bkkt.AT)
-    Ai = SparseArrays.rowvals(bkkt.AT)
-    @inbounds for k in axes(res, 2)
-        for j in 1:bkkt.m
-            yjk = yfull[j, k]
-            iszero(yjk) && continue
-            for p in Ap[j]:(Ap[j + 1] - 1)
-                v = bkkt.A_vals[bkkt.A_csr_map[p], k]
-                res[Ai[p], k] += v * yjk
-            end
-        end
-    end
+    batch_spmv!(res, bkkt.jt_op, yfull)
     return res
 end
 
@@ -312,27 +305,10 @@ function MadNLP.solve_kkt!(bkkt::NormalUniformBatchKKTSystem{T}, batch_solver::A
     return
 end
 
-# y += alpha * (A * x + beta * y)... here we implement `y <- alpha * A*x + beta * y`
-# per column. Shared AT structure, per-instance values.
+# `y ← α A x + β y` per instance via the batched A operator. Same shared
+# structure / per-instance values story as `jtprod!` above.
 function _batch_mul_A!(y::AbstractMatrix{T}, bkkt::NormalUniformBatchKKTSystem{T}, x::AbstractMatrix{T}, alpha, beta) where {T}
-    if beta != one(T)
-        if iszero(beta)
-            fill!(y, zero(T))
-        else
-            @. y *= beta
-        end
-    end
-    Ap = SparseArrays.getcolptr(bkkt.AT)
-    Ai = SparseArrays.rowvals(bkkt.AT)
-    @inbounds for k in axes(y, 2)
-        for j in 1:bkkt.m
-            acc = zero(T)
-            for p in Ap[j]:(Ap[j + 1] - 1)
-                acc += bkkt.A_vals[bkkt.A_csr_map[p], k] * x[Ai[p], k]
-            end
-            y[j, k] += alpha * acc
-        end
-    end
+    batch_spmv!(y, bkkt.j_op, x, alpha, beta)
     return y
 end
 

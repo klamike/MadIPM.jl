@@ -192,56 +192,7 @@ function MadNLP.build_kkt!(
     return
 end
 
-# CUSPARSE's `mul!` only takes a contiguous `CuVector` for the dense
-# operand; views into a non-contiguous parent (e.g. `view(view(...), :, k)`
-# or `view(reshape(view(...)), :, k)`) fall through to LinearAlgebra's
-# generic_matvecmul!, which scalar-indexes the GPU array. Copy each column
-# into a caller-supplied contiguous `CuVector` scratch (no per-call alloc).
-@inline _cucol_into!(buf, V, k::Int) = (copyto!(buf, view(V, :, k)); buf)
-
-# `MadNLP.jtprod!` for batch NormalKKT on GPU: loops per column and uses
-# CUSPARSE SpMV (reusing the per-column view of A_vals into AT.nzVal).
-# Dispatch on `AnyCuMatrix` (CuMatrix and SubArrays of CuMatrix) so the
-# `BatchUnreducedKKTVector._dual` view passed by `mul!` doesn't fall back
-# to the CPU loop in `src/batch/KKT/Sparse/normal.jl`. CUSPARSE's `mul!`
-# also requires both the output and the dense input to be contiguous
-# CuVectors, so we route per-column reads through `_cucol` and per-column
-# writes through the preallocated `bkkt.spmv_*_buf` scratch + `copyto!`
-# into the (possibly strided) caller-provided destination column.
-function MadNLP.jtprod!(
-    res::AnyCuMatrix{T}, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT}, y,
-) where {T, LS, MT <: CuMatrix{T}}
-    yfull = y isa MadIPM.BatchVector ? MadNLP.full(y) : y
-    fill!(res, zero(T))
-    in_buf = bkkt.spmv_m_buf       # contiguous scratch for the m-sized input column
-    @inbounds for k in 1:bkkt.batch_size
-        Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
-        AT_k = CUSPARSE.CuSparseMatrixCSC(bkkt.AT.colPtr, bkkt.AT.rowVal, Ax_k, size(bkkt.AT))
-        # `view(res, :, k)` of the n_tot-sized CuMatrix `res` is a contiguous
-        # CuVector — CUSPARSE-compatible — so we don't need an output scratch.
-        mul!(view(res, :, k), AT_k, _cucol_into!(in_buf, yfull, k), one(T), one(T))
-    end
-    return res
-end
-
-MadNLP.jtprod!(jacl::MadIPM.BatchVector, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT}, y) where {T, LS, MT <: CuMatrix{T}} =
-    (MadNLP.jtprod!(MadNLP.full(jacl), bkkt, y); jacl)
-
-# `_batch_mul_A!` GPU: y = α A * x + β y per column.
-function MadIPM._batch_mul_A!(
-    y::AnyCuMatrix{T}, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT},
-    x::AnyCuMatrix{T}, alpha, beta,
-) where {T, LS, MT <: CuMatrix{T}}
-    if iszero(beta); fill!(y, zero(T)); else; @. y *= beta; end
-    in_buf  = bkkt.spmv_n_buf      # n_tot-sized input scratch
-    out_buf = bkkt.spmv_m_buf      # m-sized output scratch (y can be strided)
-    @inbounds for k in 1:bkkt.batch_size
-        Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
-        AT_k = CUSPARSE.CuSparseMatrixCSC(bkkt.AT.colPtr, bkkt.AT.rowVal, Ax_k, size(bkkt.AT))
-        # mul!(y, A, x) where A = AT' so transpose. Compute into contiguous
-        # `out_buf` then accumulate into the (possibly strided) y[:, k].
-        mul!(out_buf, transpose(AT_k), _cucol_into!(in_buf, x, k), alpha, zero(T))
-        view(y, :, k) .+= out_buf
-    end
-    return y
-end
+# NormalKKT's `jtprod!` and `_batch_mul_A!` now route through BQM's
+# `batch_spmv!(::BatchSparseOp, ...)`, which has its own GPU dispatch via
+# `BatchQuadraticModelsCUDAExt`, so there's nothing GPU-specific to add
+# here for those entry points.
