@@ -78,12 +78,16 @@ function MadIPM.assemble_normal_system!(n_rows, n_cols, Jtp::CuArray{Ti}, Jtj::C
     assemble_normal_system_kernel!(CUDABackend())(n_rows, n_cols, Jtp, Jtj, Jtx, Cp, Cj, Cx, Dx, Tv; ndrange = n_rows)
 end
 
-@kernel function count_normal_nnz!(Cp, @Const(Jtp), @Const(Jtj), @Const(n_rows), @Const(n_cols))
+# `@localmem T N` requires `N` to be a compile-time constant, so pass the
+# scratch length through as `Val{N}` to make it part of the kernel's type
+# signature.
+
+@kernel function count_normal_nnz!(Cp, @Const(Jtp), @Const(Jtj), @Const(n_rows), ::Val{N}) where {N}
     i = @index(Global, Linear)
 
     # thread-local binary buffer
-    xb = @localmem UInt8 n_cols
-    for k = 1:n_cols
+    xb = @localmem UInt8 N
+    for k = 1:N
         xb[k] = 0
     end
 
@@ -107,11 +111,11 @@ end
     nothing
 end
 
-@kernel function fill_normal_indices!(Cj, @Const(Cp), @Const(Jtp), @Const(Jtj), @Const(n_rows), @Const(n_cols))
+@kernel function fill_normal_indices!(Cj, @Const(Cp), @Const(Jtp), @Const(Jtj), @Const(n_rows), ::Val{N}) where {N}
     i = @index(Global, Linear)
 
-    xb = @localmem UInt8 n_cols
-    for k = 1:n_cols
+    xb = @localmem UInt8 N
+    for k = 1:N
         xb[k] = 0
     end
 
@@ -137,11 +141,11 @@ end
 function MadIPM.build_normal_system(n_rows, n_cols, Jtp::CuVector{Ti}, Jtj::CuVector{Ti}) where {Ti}
     backend = CUDABackend()
     Cp = CUDA.ones(Ti, n_rows + 1)
-    count_normal_nnz!(backend)(Cp, Jtp, Jtj, n_rows, n_cols; ndrange = n_rows)
+    count_normal_nnz!(backend)(Cp, Jtp, Jtj, n_rows, Val(n_cols); ndrange = n_rows)
     Cp = cumsum(Cp)
     nnz_JtJ = CUDA.@allowscalar (Cp[end] - 1)
     Cj = CUDA.zeros(Ti, nnz_JtJ)
-    fill_normal_indices!(backend)(Cj, Cp, Jtp, Jtj, n_rows, n_cols; ndrange = n_rows)
+    fill_normal_indices!(backend)(Cj, Cp, Jtp, Jtj, n_rows, Val(n_cols); ndrange = n_rows)
     return (Cp, Cj)
 end
 
