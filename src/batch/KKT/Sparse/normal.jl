@@ -291,14 +291,12 @@ function MadNLP.solve_kkt!(bkkt::NormalUniformBatchKKTSystem{T}, batch_solver::A
     # dy back into wy
     copyto!(wy_mat, bkkt.r_dual)
 
-    # wx = (wx - Aᵀ dy) / Σ
-    copyto!(bkkt.r_primal, wx_mat)
-    MadNLP.jtprod!(bkkt.r_primal, bkkt, wy_mat)  # r_primal += Aᵀ wy? actually it overwrites...
-    # Hmm — `MadNLP.jtprod!` above fills res to zero then adds. We need r_primal = wx - Aᵀ dy.
-    # Easier: zero+fill Aᵀ dy into a scratch matrix, then subtract.
-    scratch = bkkt.r_primal
-    tmp = similar(scratch)
-    MadNLP.jtprod!(tmp, bkkt, wy_mat)
+    # wx = (wx - Aᵀ dy) / Σ. `wy_mat` is a `reshape(view(d.values, ...))`,
+    # whose per-column views CUSPARSE can't multiply against; route through
+    # the contiguous `bkkt.r_dual` (which already holds `dy` after the
+    # solve / copyto! pair above) so the GPU jtprod sees a real CuMatrix.
+    tmp = similar(bkkt.r_primal)
+    MadNLP.jtprod!(tmp, bkkt, bkkt.r_dual)
     @. wx_mat = (wx_mat - tmp) / bkkt.pr_diag
 
     MadNLP.finish_aug_solve!(bkkt, batch_solver)

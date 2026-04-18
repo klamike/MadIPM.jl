@@ -35,7 +35,7 @@ include("batch/madnlp/nlpmodels.jl")
 include("batch/KKT/Sparse/normal.jl")
 
 # Linear-solve glue: scalar + batch `solve_system!` and `factorize_wrapper!`.
-include("linear_solver.jl")
+include("solver/linear_solver.jl")
 
 # IPM kernels — split by section. Each file collocates the unified
 # `AnyMPCSolver` dispatch (when applicable) with the scalar (`MPCSolver`)

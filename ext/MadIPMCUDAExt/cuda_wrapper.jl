@@ -192,17 +192,27 @@ function MadNLP.build_kkt!(
     return
 end
 
+# CUSPARSE's `mul!` only takes a contiguous `CuVector` for the dense
+# operand; views into a non-contiguous parent (e.g. `view(view(...), :, k)`
+# or `view(reshape(view(...)), :, k)`) fall through to LinearAlgebra's
+# generic_matvecmul!, which scalar-indexes the GPU array. Materialize each
+# column to a contiguous CuVector before the call.
+@inline _cucol(V, k::Int) = copy(view(V, :, k))
+
 # `MadNLP.jtprod!` for batch NormalKKT on GPU: loops per column and uses
 # CUSPARSE SpMV (reusing the per-column view of A_vals into AT.nzVal).
+# Dispatch on `AnyCuMatrix` (CuMatrix and SubArrays of CuMatrix) so the
+# `BatchUnreducedKKTVector._dual` view passed by `mul!` doesn't fall back
+# to the CPU loop in `src/batch/KKT/Sparse/normal.jl`.
 function MadNLP.jtprod!(
-    res::CuMatrix{T}, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT}, y,
+    res::AnyCuMatrix{T}, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT}, y,
 ) where {T, LS, MT <: CuMatrix{T}}
     yfull = y isa MadIPM.BatchVector ? MadNLP.full(y) : y
     fill!(res, zero(T))
     @inbounds for k in 1:bkkt.batch_size
         Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
         AT_k = CUSPARSE.CuSparseMatrixCSC(bkkt.AT.colPtr, bkkt.AT.rowVal, Ax_k, size(bkkt.AT))
-        mul!(view(res, :, k), AT_k, view(yfull, :, k), one(T), one(T))
+        mul!(view(res, :, k), AT_k, _cucol(yfull, k), one(T), one(T))
     end
     return res
 end
@@ -212,15 +222,15 @@ MadNLP.jtprod!(jacl::MadIPM.BatchVector, bkkt::MadIPM.NormalUniformBatchKKTSyste
 
 # `_batch_mul_A!` GPU: y = α A * x + β y per column.
 function MadIPM._batch_mul_A!(
-    y::CuMatrix{T}, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT},
-    x::CuMatrix{T}, alpha, beta,
+    y::AnyCuMatrix{T}, bkkt::MadIPM.NormalUniformBatchKKTSystem{T, LS, MT},
+    x::AnyCuMatrix{T}, alpha, beta,
 ) where {T, LS, MT <: CuMatrix{T}}
     if iszero(beta); fill!(y, zero(T)); else; @. y *= beta; end
     @inbounds for k in 1:bkkt.batch_size
         Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
         AT_k = CUSPARSE.CuSparseMatrixCSC(bkkt.AT.colPtr, bkkt.AT.rowVal, Ax_k, size(bkkt.AT))
         # mul!(y, A, x) where A = AT' so transpose.
-        mul!(view(y, :, k), transpose(AT_k), view(x, :, k), alpha, one(T))
+        mul!(view(y, :, k), transpose(AT_k), _cucol(x, k), alpha, one(T))
     end
     return y
 end
