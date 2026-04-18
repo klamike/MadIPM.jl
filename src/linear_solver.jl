@@ -26,13 +26,17 @@ function solve_system!(
     end
     return d
 end
-function MadNLP.factorize_wrapper!(solver::MPCSolver)
-    problem = solver.problem
-    state = solver.state
-    MadNLP.@trace(problem.logger, "Factorization started.")
-    MadNLP.build_kkt!(problem.kkt)
-    state.cnt.linear_solver_time += @elapsed MadNLP.factorize_kkt!(problem.kkt)
-    state.cnt.factorization_cnt += 1
+function MadNLP.factorize_wrapper!(s::AnyMPCSolver)
+    MadNLP.@trace(_logger(s), "Factorization started.")
+    MadNLP.build_kkt!(_kkt(s))
+    _accumulate_factorize_time!(s, @elapsed MadNLP.factorize_kkt!(_kkt(s)))
+    return
+end
+
+@inline function _accumulate_factorize_time!(s::MPCSolver, t)
+    cnt = s.state.cnt
+    cnt.linear_solver_time += t
+    cnt.factorization_cnt += 1
     return
 end
 
@@ -66,10 +70,7 @@ function solve_system!(
     @. ws._ls_error |= isnan(ws._norm_gpu_w) | (check_res & (ws._norm_gpu_w > tol_ls))
     return d
 end
-function MadNLP.factorize_wrapper!(batch_solver::AbstractBatchMPCSolver)
-    problem = batch_solver.problem
-    MadNLP.@trace(problem.logger, "Factorization started.")
-    MadNLP.build_kkt!(problem.kkt)
-    batch_solver.state.batch_cnt.linear_solver_time[] += @elapsed MadNLP.factorize_kkt!(problem.kkt)
+@inline function _accumulate_factorize_time!(s::AbstractBatchMPCSolver, t)
+    s.state.batch_cnt.linear_solver_time[] += t
     return
 end
