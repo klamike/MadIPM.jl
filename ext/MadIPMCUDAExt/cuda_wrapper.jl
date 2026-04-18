@@ -173,8 +173,9 @@ function MadNLP.build_kkt!(
         # Per-instance AT nzval: walk via A_csr_map to pull values from A_vals[:, k].
         Ax_k = view(bkkt.A_vals, :, k)[bkkt.A_csr_map]
         # Per-instance D = 1 / pr_diag.
-        D_k = view(bkkt.r_primal, :, k)
-        @. D_k = one(T) / view(bkkt.pr_diag, :, k)
+        D_k     = view(bkkt.r_primal, :, k)
+        prd_k   = view(bkkt.pr_diag,  :, k)
+        @. D_k = one(T) / prd_k
         Cx_k = view(bkkt.aug_com_nzvals, :, k)
         MadIPM.assemble_normal_system!(m, n_tot, Ap, Aj, Ax_k, AAp, AAj, Cx_k, D_k)
         # Subtract du_diag from diagonal of normal matrix.

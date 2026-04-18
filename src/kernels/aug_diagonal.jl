@@ -74,27 +74,39 @@ end
 end
 
 # ---------- batch (masked active-set variant) ----------
+#
+# Mirrors the unmasked body but gates each write behind the active mask so
+# converged instances retain their previous diagonal values. Today only the
+# basic batch KKT systems exist, but the sign / pr_diag-finalize work goes
+# through the same hooks as the unmasked path so a future
+# `ScaledSparseUniformBatchKKTSystem` would be supported by adding the
+# matching `_aug_*_diag_sign` / `_finalize_aug_diagonal_masked!` overrides
+# without forking this body.
 
 function _set_aug_diagonal_reg_masked!(kkt, solver::AbstractBatchMPCSolver)
     state = solver.state
-    xl_r = lower(state.xl)
-    x_lr = lower(state.x)
-    zl_r = lower(state.zl)
-    xu_r = upper(state.xu)
-    x_ur = upper(state.x)
-    zu_r = upper(state.zu)
+    sl = _aug_l_diag_sign(kkt)
+    su = _aug_u_diag_sign(kkt)
+    xl_r = lower(state.xl); x_lr = lower(state.x); zl_r = lower(state.zl)
+    xu_r = upper(state.xu); x_ur = upper(state.x); zu_r = upper(state.zu)
     mask = state.workspace.active_mask
     _du = du_diag(kkt)
+    @. kkt.reg     = ifelse(mask == 1, state.del_w,           kkt.reg)
+    @. _du         = ifelse(mask == 1, state.del_c,           _du)
+    @. kkt.l_diag  = ifelse(mask == 1, sl * (xl_r - x_lr),    kkt.l_diag)
+    @. kkt.u_diag  = ifelse(mask == 1, su * (x_ur - xu_r),    kkt.u_diag)
+    @. kkt.l_lower = ifelse(mask == 1, zl_r,                  kkt.l_lower)
+    @. kkt.u_lower = ifelse(mask == 1, zu_r,                  kkt.u_lower)
+    _finalize_aug_diagonal_masked!(kkt, solver)
+    return
+end
+
+@inline function _finalize_aug_diagonal_masked!(kkt, s::AbstractBatchMPCSolver)
+    mask = s.state.workspace.active_mask
     _pr = pr_diag(kkt)
-    @. kkt.reg = ifelse(mask == 1, state.del_w, kkt.reg)
-    @. _du = ifelse(mask == 1, state.del_c, _du)
-    @. kkt.l_diag = ifelse(mask == 1, xl_r - x_lr, kkt.l_diag)
-    @. kkt.u_diag = ifelse(mask == 1, x_ur - xu_r, kkt.u_diag)
-    @. kkt.l_lower = ifelse(mask == 1, zl_r, kkt.l_lower)
-    @. kkt.u_lower = ifelse(mask == 1, zu_r, kkt.u_lower)
     @. _pr = ifelse(mask == 1, kkt.reg, _pr)
-    pr_diag_lb = view(pr_diag(kkt), _get_ind_lb(solver), :)
-    pr_diag_ub = view(pr_diag(kkt), _get_ind_ub(solver), :)
+    pr_diag_lb = view(pr_diag(kkt), _get_ind_lb(s), :)
+    pr_diag_ub = view(pr_diag(kkt), _get_ind_ub(s), :)
     @. pr_diag_lb = ifelse(mask == 1, pr_diag_lb - kkt.l_lower / kkt.l_diag, pr_diag_lb)
     @. pr_diag_ub = ifelse(mask == 1, pr_diag_ub - kkt.u_lower / kkt.u_diag, pr_diag_ub)
     return
