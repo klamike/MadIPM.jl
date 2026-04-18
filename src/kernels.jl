@@ -1,20 +1,29 @@
 # IPM kernels.
 #
-# Many kernels are unified across the scalar `MPCSolver` and the batched
+# Unified across the scalar `MPCSolver` and the batched
 # `UniformBatchMPCSolver` via dispatch on `AnyMPCSolver{T}` (defined in
 # src/batch/structure.jl). The accessors (`_x_lr`, `_zl_r`, `_alpha_p`,
 # `_del_w`, `_mu`, ...) live alongside each solver type and return the right
 # shape — `T`/`Vector` on scalar, `Matrix(1,bs)`/`Matrix(dim,bs)` on batch —
 # so the same broadcast expressions work on both.
 #
-# A handful of operations stay specialized:
-#   * `set_aug_diagonal_reg!` — KKT-system specific (different fields per
-#     KKT type) and batch has masked / unmasked variants for the active set.
-#   * `_xz_sum` / `get_complementarity_measure` /
-#     `get_affine_complementarity_measure` — scalar uses `mapreduce`, batch
-#     uses `batch_mapreduce!`; signatures differ.
+# Unified here: RHS-setting kernels, predictor/corrector direction kernels,
+# regularization init/update.
+#
+# A handful of operations stay specialized in their respective siblings
+# (src/solver.jl for scalar, src/batch/madipm/* for batch):
+#   * `set_aug_diagonal_reg!` — KKT-system specific (different field layouts
+#     per KKT type) and batch has masked / unmasked variants for the active
+#     set.
+#   * `get_complementarity_measure` / `get_affine_complementarity_measure` /
+#     `update_barrier!` — scalar uses scalar arithmetic and `mapreduce`,
+#     batch uses `batch_mapreduce!` writing into matrix scratch.
 #   * `update_step!` for `MehrotraAdaptiveStep` — scalar's tight scalar-state
 #     formulation vs batch's per-column kernel.
+#   * `apply_step!` / `evaluate_model!` / `mpc_step!` / `mpc!` / `solve!`
+#     — scalar uses BLAS/axpy! and direct eval wrappers; batch uses
+#     broadcast + active-set bookkeeping. Per-column FMA matching forces
+#     these to stay separate (see CLAUDE.md).
 #
 # This file is loaded *after* the batch infrastructure so that
 # `AnyMPCSolver{T}` is in scope.
