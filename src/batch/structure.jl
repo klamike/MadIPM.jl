@@ -155,6 +155,10 @@ _get_ind_ub(bs::AbstractBatchMPCSolver) = bs.problem.bcb.ind_ub
 @inline _zl_r(s::AbstractBatchMPCSolver)   = lower(s.state.zl)
 @inline _dx_lr(s::AbstractBatchMPCSolver)  = xp_lr(s.state.d)
 @inline _dz_lb(s::AbstractBatchMPCSolver)  = MadNLP.dual_lb(s.state.d)
+@inline _x_ur(s::AbstractBatchMPCSolver)   = upper(s.state.x)
+@inline _xu_r(s::AbstractBatchMPCSolver)   = upper(s.state.xu)
+@inline _zu_r(s::AbstractBatchMPCSolver)   = upper(s.state.zu)
+@inline _dz_ub(s::AbstractBatchMPCSolver)  = MadNLP.dual_ub(s.state.d)
 
 @inline _correction_lb(s::AbstractBatchMPCSolver) = MadNLP.full(s.state.correction_lb)
 

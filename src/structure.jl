@@ -106,6 +106,12 @@ end
 @inline _zl_r(s::MPCSolver)     = s.state.zl_r
 @inline _dx_lr(s::MPCSolver)    = s.state.dx_lr
 @inline _dz_lb(s::MPCSolver)    = MadNLP.dual_lb(s.state.d)
+# Std form has no upper-bound multipliers / variables on the scalar side;
+# accessors return empty views so unified u-side broadcasts are no-ops.
+@inline _x_ur(s::MPCSolver)     = view(MadNLP.full(s.state.x), Int[])
+@inline _xu_r(s::MPCSolver)     = view(MadNLP.full(s.state.x), Int[])
+@inline _zu_r(s::MPCSolver)     = view(MadNLP.full(s.state.zl), Int[])
+@inline _dz_ub(s::MPCSolver)    = view(MadNLP.full(s.state.d), Int[])
 
 @inline _correction_lb(s::MPCSolver) = s.state.correction_lb
 
