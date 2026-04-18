@@ -78,12 +78,21 @@ function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, n::Int, m::Int, nlb::Int,
     )
 end
 
-mutable struct UniformBatchMPCSolver{T, MT, VT, VI, BM, BCB, BVS, KKT<:AbstractBatchKKTSystem{T}, REG<:AbstractRegularization, STEP<:AbstractStepRule, BARR<:AbstractBarrierUpdate} <: AbstractBatchMPCSolver{T, MT, VT}
+mutable struct BatchMPCProblem{T, MT, BM, BCB, BVS, KKT<:AbstractBatchKKTSystem{T}, REG<:AbstractRegularization, STEP<:AbstractStepRule, BARR<:AbstractBarrierUpdate}
+    nlp::BM
+    bcb::BCB
+    kkt::KKT
+    opt::IPMOptions
+    regularization::REG
+    step_rule::STEP
+    barrier_update::BARR
+    logger::MadNLP.MadNLPLogger
+    batch_views::BVS
     batch_size::Int
+end
 
-    d::BatchUnreducedKKTVector{T, MT}
-    p::BatchUnreducedKKTVector{T, MT}
-    _w1::BatchUnreducedKKTVector{T, MT}
+mutable struct BatchMPCState{T, MT, VT}
+    batch_cnt::BatchCounters
 
     x::BatchPrimalVector{T, MT}
     xl::BatchPrimalVector{T, MT}
@@ -99,23 +108,34 @@ mutable struct UniformBatchMPCSolver{T, MT, VT, VI, BM, BCB, BVS, KKT<:AbstractB
     correction_lb::BatchVector{T, MT}
     correction_ub::BatchVector{T, MT}
 
-    workspace::UniformBatchWorkspace{T, VT, MT}
+    d::BatchUnreducedKKTVector{T, MT}
+    p::BatchUnreducedKKTVector{T, MT}
+    _w1::BatchUnreducedKKTVector{T, MT}
 
-    opt::IPMOptions
-    regularization::REG
-    step_rule::STEP
-    barrier_update::BARR
-    batch_cnt::BatchCounters
-    logger::MadNLP.MadNLPLogger
-    batch_views::BVS
-    kkt::KKT
+    workspace::UniformBatchWorkspace{T, VT, MT}
 
     del_w::MT
     del_c::MT
-
-    nlp::BM
-    bcb::BCB
 end
+
+mutable struct UniformBatchMPCSolver{T, MT, VT, P<:BatchMPCProblem{T, MT}, S<:BatchMPCState{T, MT, VT}} <: AbstractBatchMPCSolver{T, MT, VT}
+    problem::P
+    state::S
+end
+
+# Forward field access from the solver to the underlying problem/state so
+# existing call sites such as `batch_solver.kkt` keep working alongside the
+# new `batch_solver.problem.kkt` / `batch_solver.state.x` access path. The
+# `:problem` / `:state` symbols themselves are returned directly.
+@inline function Base.getproperty(s::UniformBatchMPCSolver, name::Symbol)
+    name === :problem && return getfield(s, :problem)
+    name === :state   && return getfield(s, :state)
+    p = getfield(s, :problem)
+    hasfield(typeof(p), name) && return getfield(p, name)
+    return getfield(getfield(s, :state), name)
+end
+@inline Base.propertynames(s::UniformBatchMPCSolver) =
+    (:problem, :state, fieldnames(typeof(getfield(s, :problem)))..., fieldnames(typeof(getfield(s, :state)))...)
 
 _get_ind_lb(bs::AbstractBatchMPCSolver) = bs.bcb.ind_lb
 _get_ind_ub(bs::AbstractBatchMPCSolver) = bs.bcb.ind_ub
@@ -262,19 +282,19 @@ function UniformBatchMPCSolver(
     batch_del_w = fill!(MT(undef, 1, batch_size), zero(T))
     batch_del_c = fill!(MT(undef, 1, batch_size), zero(T))
 
-    return UniformBatchMPCSolver{T, MT, VT, VI, typeof(bnlp), typeof(bcb), typeof(batch_views), typeof(batch_kkts), typeof(regularization), typeof(step_rule), typeof(barrier_update)}(
-        batch_size,
-        batch_d, batch_p, batch_w1,
+    problem = BatchMPCProblem(
+        bnlp, bcb, batch_kkts,
+        ipm_opt, regularization, step_rule, barrier_update,
+        logger, batch_views, batch_size,
+    )
+    state = BatchMPCState(
+        batch_cnt,
         batch_x, batch_xl, batch_xu, batch_zl, batch_zu, batch_f,
         batch_y, batch_c, batch_jacl, batch_rhs,
         batch_correction_lb, batch_correction_ub,
+        batch_d, batch_p, batch_w1,
         workspace,
-        ipm_opt, regularization, step_rule, barrier_update,
-        batch_cnt, logger,
-        batch_views,
-        batch_kkts,
         batch_del_w, batch_del_c,
-        bnlp,
-        bcb,
     )
+    return UniformBatchMPCSolver{T, MT, VT, typeof(problem), typeof(state)}(problem, state)
 end

@@ -1,10 +1,3 @@
-
-#=
-    Interface to direct solver for solving KKT system. The IPM-side
-    try-bump-retry driver (`factorize_regularized_system!`) lives in
-    src/solver/factorize.jl alongside its batch counterpart.
-=#
-
 function solve_system!(
     d::MadNLP.UnreducedKKTVector{T},
     solver::MadNLP.AbstractMadNLPSolver{T},
@@ -70,4 +63,10 @@ function solve_system!(
     @. ws._norm_gpu_w /= max(one(T), ws._norm_gpu_p)    # ratio in-place
     @. ws._ls_error |= isnan(ws._norm_gpu_w) | (check_res & (ws._norm_gpu_w > tol_ls))
     return d
+end
+function MadNLP.factorize_wrapper!(batch_solver::AbstractBatchMPCSolver)
+    MadNLP.@trace(batch_solver.logger, "Factorization started.")
+    MadNLP.build_kkt!(batch_solver.kkt)
+    batch_solver.batch_cnt.linear_solver_time[] += @elapsed MadNLP.factorize_kkt!(batch_solver.kkt)
+    return
 end

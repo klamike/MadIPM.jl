@@ -204,13 +204,6 @@ function MadNLP.build_kkt!(bkkt::SparseUniformBatchKKTSystem)
     return
 end
 
-function MadNLP.factorize_wrapper!(batch_solver::AbstractBatchMPCSolver)
-    MadNLP.@trace(batch_solver.logger, "Factorization started.")
-    MadNLP.build_kkt!(batch_solver.kkt)
-    batch_solver.batch_cnt.linear_solver_time[] += @elapsed MadNLP.factorize_kkt!(batch_solver.kkt)
-    return
-end
-
 function MadNLP.jtprod!(res::AbstractMatrix, bkkt::SparseUniformBatchKKTSystem, y::BatchVector)
     batch_spmv!(res, bkkt.jt_op, MadNLP.full(y))
     return res
