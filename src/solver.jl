@@ -95,30 +95,13 @@ function update_termination_criteria!(solver::MPCSolver{T}) where {T}
     return
 end
 
-function affine_direction!(solver::MPCSolver)
-    problem = solver.problem
-    state = solver.state
-    set_predictive_rhs!(solver, problem.kkt)
-    solve_system!(state.d, solver, state.p)
-    return
-end
-
 function prediction_step!(solver::MPCSolver)
-    problem = solver.problem
     state = solver.state
     affine_direction!(solver)
     alpha_aff_p, alpha_aff_d = get_fraction_to_boundary_step(solver, one(eltype(state.y)))
     mu_affine = get_affine_complementarity_measure(solver, alpha_aff_p, alpha_aff_d)
     get_correction!(solver, state.correction_lb)
-    state.mu_curr = update_barrier!(problem.barrier_update, solver, mu_affine)
-    return
-end
-
-function mehrotra_correction_direction!(solver::MPCSolver)
-    problem = solver.problem
-    state = solver.state
-    set_correction_rhs!(solver, problem.kkt, state.mu, state.correction_lb)
-    solve_system!(state.d, solver, state.p)
+    state.mu_curr = update_barrier!(_barrier_update(solver), solver, mu_affine)
     return
 end
 

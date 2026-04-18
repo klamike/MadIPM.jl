@@ -19,6 +19,20 @@
 # This file is loaded *after* the batch infrastructure so that
 # `AnyMPCSolver{T}` is in scope.
 
+# ---------- unified IPM direction kernels ----------
+
+function affine_direction!(s::AnyMPCSolver)
+    set_predictive_rhs!(s, _kkt(s))
+    solve_system!(_d(s), s, _p(s))
+    return
+end
+
+function mehrotra_correction_direction!(s::AnyMPCSolver)
+    set_correction_rhs!(s, _kkt(s), _mu(s), _correction_lb(s))
+    solve_system!(_d(s), s, _p(s))
+    return
+end
+
 # ---------- unified IPM RHS / correction kernels ----------
 
 function set_initial_primal_rhs!(s::AnyMPCSolver{T}) where {T}
@@ -70,13 +84,6 @@ function get_correction!(s::AnyMPCSolver, correction_lb)
     correction_lb .= _dx_lr(s) .* _dz_lb(s)
     return
 end
-
-# Backwards-compat for the std-form-only batch IPM call sites that still pass
-# UB-side scratch (always size 0) and the index arrays.
-set_correction_rhs!(s::AbstractBatchMPCSolver, kkt::AbstractBatchKKTSystem, mu, correction_lb, _correction_ub, _ind_lb, _ind_ub) =
-    set_correction_rhs!(s, kkt, mu, correction_lb)
-get_correction!(s::AbstractBatchMPCSolver, correction_lb, _correction_ub) =
-    get_correction!(s, correction_lb)
 
 # ---------- KKT-system-specific augmented-diagonal setup (scalar) ----------
 

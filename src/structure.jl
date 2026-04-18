@@ -84,10 +84,13 @@ end
 # `AbstractBatchMPCSolver` is defined in src/batch/utils.jl; the matching
 # accessors for batch live in src/batch/structure.jl.
 
-@inline _opt(s::MPCSolver)      = s.problem.opt
-@inline _logger(s::MPCSolver)   = s.problem.logger
-@inline _nlb(s::MPCSolver)      = s.problem.nlb
-@inline _kkt(s::MPCSolver)      = s.problem.kkt
+@inline _opt(s::MPCSolver)            = s.problem.opt
+@inline _logger(s::MPCSolver)         = s.problem.logger
+@inline _nlb(s::MPCSolver)            = s.problem.nlb
+@inline _kkt(s::MPCSolver)            = s.problem.kkt
+@inline _step_rule(s::MPCSolver)      = s.problem.step_rule
+@inline _regularization(s::MPCSolver) = s.problem.regularization
+@inline _barrier_update(s::MPCSolver) = s.problem.barrier_update
 
 @inline _x(s::MPCSolver)        = s.state.x
 @inline _zl(s::MPCSolver)       = s.state.zl

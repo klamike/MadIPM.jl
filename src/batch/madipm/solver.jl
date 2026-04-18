@@ -408,11 +408,6 @@ function update_solution!(stats::BatchExecutionStats, batch_solver::AbstractBatc
     return stats
 end
 
-function affine_direction!(solver::AbstractBatchMPCSolver)
-    set_predictive_rhs!(solver, solver.kkt)
-    solve_system!(solver.d, solver, solver.p)
-end
-
 function prediction_step!(solver::AbstractBatchMPCSolver)
     ws = solver.workspace
     affine_direction!(solver)
@@ -421,14 +416,8 @@ function prediction_step!(solver::AbstractBatchMPCSolver)
     get_fraction_to_boundary_step!(solver)
     zero_inactive_step!(solver)
     get_affine_complementarity_measure!(solver, ws.alpha_p, ws.alpha_d)
-    get_correction!(solver, MadNLP.full(solver.correction_lb), MadNLP.full(solver.correction_ub))
-    update_barrier!(solver.barrier_update, solver, ws.mu_affine)
-    return
-end
-
-function mehrotra_correction_direction!(solver::AbstractBatchMPCSolver)
-    set_correction_rhs!(solver, solver.kkt, solver.workspace.mu_batch, MadNLP.full(solver.correction_lb), MadNLP.full(solver.correction_ub), nothing, nothing)
-    solve_system!(solver.d, solver, solver.p)
+    get_correction!(solver, MadNLP.full(solver.correction_lb))
+    update_barrier!(_barrier_update(solver), solver, ws.mu_affine)
     return
 end
 

@@ -127,10 +127,13 @@ _get_ind_ub(bs::AbstractBatchMPCSolver) = bs.bcb.ind_ub
 # unified kernels work identically on scalar (`Vector`/`T`) and batch
 # (`Matrix`/`Matrix(1,bs)`) storage.
 
-@inline _opt(s::AbstractBatchMPCSolver)    = s.opt
-@inline _logger(s::AbstractBatchMPCSolver) = s.logger
-@inline _nlb(s::AbstractBatchMPCSolver)    = s.d.nlb
-@inline _kkt(s::AbstractBatchMPCSolver)    = s.kkt
+@inline _opt(s::AbstractBatchMPCSolver)            = s.opt
+@inline _logger(s::AbstractBatchMPCSolver)         = s.logger
+@inline _nlb(s::AbstractBatchMPCSolver)            = s.d.nlb
+@inline _kkt(s::AbstractBatchMPCSolver)            = s.kkt
+@inline _step_rule(s::AbstractBatchMPCSolver)      = s.step_rule
+@inline _regularization(s::AbstractBatchMPCSolver) = s.regularization
+@inline _barrier_update(s::AbstractBatchMPCSolver) = s.barrier_update
 
 @inline _x(s::AbstractBatchMPCSolver)      = s.x
 @inline _zl(s::AbstractBatchMPCSolver)     = s.zl
