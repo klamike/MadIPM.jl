@@ -27,9 +27,7 @@ struct NormalUniformBatchKKTSystem{T, LS, MT, VT, VI, VI32, BVS} <: AbstractBatc
     pr_diag::MT                                    # (n_tot, bs)
     du_diag::MT                                    # (m, bs)
     l_diag::MT
-    u_diag::MT
     l_lower::MT
-    u_lower::MT
     # Metadata
     batch_size::Int
     batch_views::BVS
@@ -103,17 +101,14 @@ function MadNLP.create_kkt_system(
     pr_diag = similar(A_vals, n_tot, batch_size)
     du_diag = similar(A_vals, m, batch_size)
     nlb = length(bcb.ind_lb)
-    nub = length(bcb.ind_ub)
     l_diag  = similar(A_vals, nlb, batch_size)
-    u_diag  = similar(A_vals, nub, batch_size)
     l_lower = similar(A_vals, nlb, batch_size)
-    u_lower = similar(A_vals, nub, batch_size)
 
     return NormalUniformBatchKKTSystem{T, typeof(batch_solver), MT, VT, VI, typeof(I), typeof(batch_views)}(
         A_coo, A_vals, AT, A_csr_map, jac_coo_view,
         aug_com, aug_com_nzvals, batch_solver,
         rhs_buffer, r_primal, r_dual,
-        reg, pr_diag, du_diag, l_diag, u_diag, l_lower, u_lower,
+        reg, pr_diag, du_diag, l_diag, l_lower,
         batch_size, batch_views, n_tot, m,
         bcb.ind_ineq, bcb.ind_lb, bcb.ind_ub,
     )
@@ -131,9 +126,7 @@ function MadNLP.initialize!(bkkt::NormalUniformBatchKKTSystem{T}) where {T}
     fill!(bkkt.pr_diag, one(T))
     fill!(bkkt.du_diag, zero(T))
     fill!(bkkt.l_lower, zero(T))
-    fill!(bkkt.u_lower, zero(T))
     fill!(bkkt.l_diag, one(T))
-    fill!(bkkt.u_diag, one(T))
     fill!(bkkt.r_dual, zero(T))
     fill!(bkkt.r_primal, zero(T))
     fill!(bkkt.aug_com_nzvals, zero(T))
@@ -265,8 +258,7 @@ function MadNLP.solve_kkt!(bkkt::NormalUniformBatchKKTSystem{T}, batch_solver::A
     d = batch_solver.d
     # Reduce lb/ub rows of the unreduced vector into the primal block.
     lb_off = d.n + d.m
-    _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag,
-                                 d.ind_ub, lb_off + d.nlb, bkkt.u_diag)
+    _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag)
 
     wx_mat = reshape(view(d.values, 1:bkkt.n_tot, :), bkkt.n_tot, size(d.values, 2))
     wy_mat = reshape(view(d.values, bkkt.n_tot + 1 : bkkt.n_tot + bkkt.m, :), bkkt.m, size(d.values, 2))
@@ -325,16 +317,14 @@ end
 
 function MadNLP.reduce_rhs!(bkkt::NormalUniformBatchKKTSystem, d::BatchUnreducedKKTVector)
     lb_off = d.n + d.m
-    _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag,
-                                 d.ind_ub, lb_off + d.nlb, bkkt.u_diag)
+    _reduce_rhs_batch!(d.values, d.ind_lb, lb_off, bkkt.l_diag)
     return
 end
 
 function MadNLP.finish_aug_solve!(bkkt::NormalUniformBatchKKTSystem, batch_solver::AbstractBatchMPCSolver)
     d = batch_solver.d
     lb_off = d.n + d.m
-    _finish_aug_solve_batch!(d.values, d.ind_lb, lb_off, bkkt.l_lower, bkkt.l_diag,
-                                       d.ind_ub, lb_off + d.nlb, bkkt.u_lower, bkkt.u_diag)
+    _finish_aug_solve_batch!(d.values, d.ind_lb, lb_off, bkkt.l_lower, bkkt.l_diag)
     return
 end
 
@@ -363,6 +353,6 @@ function LinearAlgebra.mul!(
     _batch_mul_A!(wd, bkkt, xp, alpha, beta)
     @. wd -= alpha * bkkt.du_diag * xd
 
-    _kktmul!(w, x, bkkt.reg, bkkt.du_diag, bkkt.l_lower, bkkt.u_lower, bkkt.l_diag, bkkt.u_diag, alpha, beta)
+    _kktmul!(w, x, bkkt.reg, bkkt.du_diag, bkkt.l_lower, bkkt.l_diag, alpha, beta)
     return w
 end

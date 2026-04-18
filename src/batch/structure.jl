@@ -1,8 +1,6 @@
 struct UniformBatchWorkspace{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, MI<:AbstractMatrix{Int32}, MI64<:AbstractMatrix{Int64}}
     alpha_xl::MT
-    alpha_xu::MT
     alpha_zl::MT
-    alpha_zu::MT
     alpha_p::MT
     alpha_d::MT
     tau::MT
@@ -11,7 +9,6 @@ struct UniformBatchWorkspace{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, MI
     mu_curr::MT
     mu_affine::MT
     sum_lb::MT
-    sum_ub::MT
 
     obj_val::MT
     norm_b::MT
@@ -40,19 +37,21 @@ struct UniformBatchWorkspace{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, MI
     bv::MT
 end
 
-function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, n::Int, m::Int, nlb::Int, nub::Int, batch_size::Int;
+function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, n::Int, m::Int, nlb::Int, batch_size::Int;
                         nvar_nlp::Int=0) where {T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}}
     _proto = MT(undef, 1, batch_size)
     MI = typeof(similar(_proto, Int32))
     MI64 = typeof(similar(_proto, Int64))
     return UniformBatchWorkspace{T, VT, MT, MI, MI64}(
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # alpha_xl, alpha_xu
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # alpha_zl, alpha_zu
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # alpha_p, alpha_d
+        MT(undef, 1, batch_size),  # alpha_xl
+        MT(undef, 1, batch_size),  # alpha_zl
+        MT(undef, 1, batch_size),  # alpha_p
+        MT(undef, 1, batch_size),  # alpha_d
         MT(undef, 1, batch_size),  # tau
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # mu_batch, mu_curr
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # mu_affine, sum_lb
-        MT(undef, 1, batch_size),  # sum_ub
+        MT(undef, 1, batch_size),  # mu_batch
+        MT(undef, 1, batch_size),  # mu_curr
+        MT(undef, 1, batch_size),  # mu_affine
+        MT(undef, 1, batch_size),  # sum_lb
         MT(undef, 1, batch_size),  # obj_val
         MT(undef, 1, batch_size),  # norm_b
         MT(undef, 1, batch_size),  # norm_c
@@ -87,9 +86,7 @@ mutable struct UniformBatchMPCSolver{T, MT, VT, VI, BM, BCB, BVS, KKT<:AbstractB
 
     x::BatchPrimalVector{T, MT}
     xl::BatchPrimalVector{T, MT}
-    xu::BatchPrimalVector{T, MT}
     zl::BatchPrimalVector{T, MT}
-    zu::BatchPrimalVector{T, MT}
     f::BatchPrimalVector{T, MT}
 
     y::BatchVector{T, MT}
@@ -97,7 +94,6 @@ mutable struct UniformBatchMPCSolver{T, MT, VT, VI, BM, BCB, BVS, KKT<:AbstractB
     jacl::BatchVector{T, MT}
     rhs::BatchVector{T, MT}
     correction_lb::BatchVector{T, MT}
-    correction_ub::BatchVector{T, MT}
 
     workspace::UniformBatchWorkspace{T, VT, MT}
 
@@ -117,8 +113,17 @@ mutable struct UniformBatchMPCSolver{T, MT, VT, VI, BM, BCB, BVS, KKT<:AbstractB
     bcb::BCB
 end
 
+# UB fields don't exist on UniformBatchMPCSolver; return empty placeholders
+# via `getproperty` so legacy batch code that still reads `solver.xu` /
+# `solver.zu` / `solver.correction_ub` (inert on std-form input) stays valid.
+Base.getproperty(bs::UniformBatchMPCSolver, s::Symbol) =
+    s === :xu ? getfield(bs, :x) :
+    s === :zu ? getfield(bs, :zl) :
+    s === :correction_ub ? getfield(bs, :correction_lb) :
+    getfield(bs, s)
+
 _get_ind_lb(bs::AbstractBatchMPCSolver) = bs.bcb.ind_lb
-_get_ind_ub(bs::AbstractBatchMPCSolver) = bs.bcb.ind_ub
+_get_ind_ub(bs::AbstractBatchMPCSolver) = bs.bcb.ind_lb[1:0]
 active_batch_size(bs::AbstractBatchMPCSolver) = local_batch_size(active_view(bs.batch_views))
 
 function update_active_set!(state::BatchViewState, status::Vector{MadNLP.Status})
@@ -142,7 +147,7 @@ update_active_set!(bs::AbstractBatchMPCSolver) = update_active_set!(bs.batch_vie
 """
     UniformBatchMPCSolver(bnlp::AbstractBatchNLPModel; linear_solver, kwargs...)
 
-Construct a batch solver from a `AbstractBatchNLPModel`.
+Construct a batch solver from a standard-form `AbstractBatchNLPModel`.
 """
 function UniformBatchMPCSolver(
     bnlp::NLPModels.AbstractBatchNLPModel{T, MT};
@@ -178,14 +183,12 @@ function UniformBatchMPCSolver(
     )
 
     ind_lb = bcb.ind_lb
-    ind_ub = bcb.ind_ub
 
     ns = length(bcb.ind_ineq)
     nx = bcb.nvar
     n = nx + ns
     m = bcb.ncon
     nlb = length(ind_lb)
-    nub = length(ind_ub)
 
     batch_views = BatchViewState(bcb, batch_size)
 
@@ -197,25 +200,22 @@ function UniformBatchMPCSolver(
         batch_views = batch_views,
     )
 
-    batch_x  = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_xl = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_xu = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_zl = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_zu = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_f  = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
+    batch_x  = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb)
+    batch_xl = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb)
+    batch_zl = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb)
+    batch_f  = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb)
 
-    batch_d  = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
-    batch_p  = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
-    batch_w1 = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
+    batch_d  = BatchUnreducedKKTVector(MT, VT, n, m, nlb, batch_size, ind_lb)
+    batch_p  = BatchUnreducedKKTVector(MT, VT, n, m, nlb, batch_size, ind_lb)
+    batch_w1 = BatchUnreducedKKTVector(MT, VT, n, m, nlb, batch_size, ind_lb)
 
     batch_correction_lb = BatchVector(MT, VT, nlb, batch_size)
-    batch_correction_ub = BatchVector(MT, VT, nub, batch_size)
     batch_jacl          = BatchVector(MT, VT, n, batch_size)
     batch_y             = BatchVector(MT, VT, m, batch_size)
     batch_c             = BatchVector(MT, VT, m, batch_size)
     batch_rhs           = BatchVector(MT, VT, m, batch_size)
 
-    workspace = UniformBatchWorkspace(MT, VT, n, m, nlb, nub, batch_size;
+    workspace = UniformBatchWorkspace(MT, VT, n, m, nlb, batch_size;
                                nvar_nlp=nvar_nlp)
 
     batch_del_w = fill!(MT(undef, 1, batch_size), zero(T))
@@ -224,9 +224,9 @@ function UniformBatchMPCSolver(
     return UniformBatchMPCSolver{T, MT, VT, VI, typeof(bnlp), typeof(bcb), typeof(batch_views), typeof(batch_kkts), typeof(regularization), typeof(step_rule), typeof(barrier_update)}(
         batch_size,
         batch_d, batch_p, batch_w1,
-        batch_x, batch_xl, batch_xu, batch_zl, batch_zu, batch_f,
+        batch_x, batch_xl, batch_zl, batch_f,
         batch_y, batch_c, batch_jacl, batch_rhs,
-        batch_correction_lb, batch_correction_ub,
+        batch_correction_lb,
         workspace,
         ipm_opt, regularization, step_rule, barrier_update,
         batch_cnt, logger,
