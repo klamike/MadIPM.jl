@@ -34,6 +34,7 @@ include("batch/madnlp/linear_solver.jl")
 include("batch/madnlp/kernels.jl")
 include("batch/madnlp/initialization.jl")
 include("batch/madnlp/nlpmodels.jl")
+include("batch/KKT/Sparse/normal.jl")
 include("batch/madipm/kernels.jl")
 include("batch/madipm/solver.jl")
 

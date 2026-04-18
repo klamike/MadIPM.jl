@@ -579,6 +579,50 @@ function solve!(batch_solver::AbstractBatchMPCSolver{T, MT, VT}) where {T, MT, V
     return stats
 end
 
+"""
+    stats = madipm_batch(bnlp::ObjRHSBatchQuadraticModel; kwargs...)
+
+Solve a batch of LP/QP instances by reformulating each into standard form
+(`Ax = b, z ≥ 0`) via [`standard_form`](@ref), running the batch IPM over the
+shared std-form KKT, and recovering each primal/dual in the original space.
+
+The input batch must share the Jacobian/Hessian sparsity and bound kinds
+across instances (enforced by `standard_form`). Keyword arguments (other
+than `regularization`, `step_rule`, `barrier_update`, `print_level`, etc.)
+are forwarded to [`IPMOptions`](@ref).
+"""
+function madipm_batch(bnlp::ObjRHSBatchQuadraticModel; kwargs...)
+    std_bnlp, ws_batch = standard_form(bnlp)
+    batch_solver = UniformBatchMPCSolver(std_bnlp; kwargs...)
+    std_stats = solve!(batch_solver)
+    # Recover solution / multipliers in original space.
+    nbatch = std_stats.solution |> size |> last
+    orig_stats = BatchExecutionStats(typeof(bnlp.c_batch), typeof(bnlp.data.c), NLPModels.get_nvar(bnlp), NLPModels.get_ncon(bnlp), nbatch)
+    copyto!(orig_stats.status, std_stats.status)
+    recover_primal!(orig_stats.solution, ws_batch, std_stats.solution)
+    recover_variable_multipliers!(orig_stats.multipliers_L, orig_stats.multipliers_U, ws_batch, std_stats.multipliers_L)
+    BatchQuadraticModels._batch_gather_dual!(orig_stats.multipliers, ws_batch.con_start.row, std_stats.multipliers)
+    # Per-instance objective in original space: f(x) = c0_batch + c' x_std + 1/2 x_std' Q x_std
+    # But we can also just evaluate NLPModels.obj per column against the orig model.
+    @inbounds for j in axes(orig_stats.solution, 2)
+        orig_stats.dual_feas[j]   = std_stats.dual_feas[j]
+        orig_stats.primal_feas[j] = std_stats.primal_feas[j]
+        orig_stats.iter[j]        = std_stats.iter[j]
+        orig_stats.total_time[j]  = std_stats.total_time[j]
+    end
+    # Objective in orig space: use std obj + workspace c0 offset removal.
+    # std.obj = c_std' z + (1/2) z' Q_std z, with c0_std per instance in ws.c0_batch.
+    # Orig.obj = std.obj shifted by -ws.c0_batch + orig.c0.
+    copyto!(orig_stats.objective, std_stats.objective)
+    # std_stats.objective already includes the std c0 (which we never set on std model).
+    # Add the presolve shift so we get the true original objective.
+    orig_stats.objective .+= ws_batch.c0_batch
+    # Constraints in original space: cᵢ = A xᵢ (per instance). A is shared.
+    mul!(orig_stats.constraints, bnlp.data.A, orig_stats.solution)
+    return orig_stats
+end
+
+# Fallback for other batch NLP types — no std-form wrapping.
 function madipm_batch(bnlp::NLPModels.AbstractBatchNLPModel; kwargs...)
     batch_solver = UniformBatchMPCSolver(bnlp; kwargs...)
     return solve!(batch_solver)
