@@ -35,15 +35,16 @@ function set_aug_diagonal_reg!(kkt::AbstractBatchKKTSystem, s::AbstractBatchMPCS
 end
 
 # Same math, different storage convention:
-#   * basic / batch KKT store `l_diag = xl - x` (≤ 0) and `u_diag = x - xu`
-#     (≤ 0); the lb / ub pr_diag updates flow through `_finalize_aug_diagonal!`.
+#   * basic scalar / batch KKT store `l_diag = xl - x` (≤ 0) and
+#     `u_diag = x - xu` (≤ 0); the lb / ub pr_diag updates flow through
+#     `_finalize_aug_diagonal!`.
 #   * `MadNLP.ScaledSparseKKTSystem` expects the positive convention
 #     `l_diag = x - xl`, `u_diag = xu - x`, and its `_set_aug_diagonal!`
 #     handles the (different) pr_diag layout with the scaling factor.
-@inline _aug_l_diag_sign(::MadNLP.AbstractKKTSystem)      = -1
-@inline _aug_u_diag_sign(::MadNLP.AbstractKKTSystem)      = -1
-@inline _aug_l_diag_sign(::MadNLP.ScaledSparseKKTSystem)  = +1
-@inline _aug_u_diag_sign(::MadNLP.ScaledSparseKKTSystem)  = +1
+@inline _aug_l_diag_sign(_kkt) = -1
+@inline _aug_u_diag_sign(_kkt) = -1
+@inline _aug_l_diag_sign(::MadNLP.ScaledSparseKKTSystem) = +1
+@inline _aug_u_diag_sign(::MadNLP.ScaledSparseKKTSystem) = +1
 
 function _set_aug_diagonal_reg_unmasked!(kkt, s::AnyMPCSolver)
     kkt.reg .= _del_w(s)
@@ -58,7 +59,7 @@ function _set_aug_diagonal_reg_unmasked!(kkt, s::AnyMPCSolver)
     return
 end
 
-@inline function _finalize_aug_diagonal!(kkt::MadNLP.AbstractKKTSystem, s::AnyMPCSolver)
+@inline function _finalize_aug_diagonal!(kkt, s::AnyMPCSolver)
     pr_diag(kkt) .= kkt.reg
     _pr_diag_lb_view(kkt, s) .-= kkt.l_lower ./ kkt.l_diag
     _pr_diag_ub_view(kkt, s) .-= kkt.u_lower ./ kkt.u_diag
