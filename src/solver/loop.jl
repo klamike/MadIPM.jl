@@ -41,24 +41,31 @@ function evaluate_model!(solver::MPCSolver)
     return
 end
 
-function mpc_step!(solver::MPCSolver)
-    factorize_regularized_system!(solver)
-    prediction_step!(solver)
-    mehrotra_correction_direction!(solver)
-    update_step!(_step_rule(solver), solver)
-    apply_step!(solver)
-    evaluate_model!(solver)
+function mpc_step!(s::AnyMPCSolver)
+    _mpc_step_pre!(s)
+    factorize_regularized_system!(s)
+    prediction_step!(s)
+    mehrotra_correction_direction!(s)
+    update_step!(_step_rule(s), s)
+    _mpc_step_post_correction!(s)
+    apply_step!(s)
+    evaluate_model!(s)
     return
 end
 
-function mpc!(solver::MPCSolver)
+@inline _mpc_step_pre!(::MPCSolver) = nothing
+@inline _mpc_step_post_correction!(::MPCSolver) = nothing
+
+function mpc!(s::AnyMPCSolver)
     while true
-        MadNLP.print_iter(solver)
-        update_termination_criteria!(solver)
-        solver.state.status != MadNLP.REGULAR && return
-        mpc_step!(solver)
+        MadNLP.print_iter(s)
+        update_termination_criteria!(s)
+        _post_termination_check!(s) && return
+        mpc_step!(s)
     end
 end
+
+@inline _post_termination_check!(solver::MPCSolver) = solver.state.status != MadNLP.REGULAR
 
 # ---------- batch ----------
 
@@ -102,16 +109,11 @@ function evaluate_model!(batch_solver::AbstractBatchMPCSolver)
     return
 end
 
-function mpc_step!(batch_solver::AbstractBatchMPCSolver)
+@inline function _mpc_step_pre!(batch_solver::AbstractBatchMPCSolver)
     fill!(batch_solver.state.workspace._ls_error, zero(Int32))
-    factorize_regularized_system!(batch_solver)
-    prediction_step!(batch_solver)
-    mehrotra_correction_direction!(batch_solver)
-    update_step!(_step_rule(batch_solver), batch_solver)
-    zero_inactive_step!(batch_solver)
-    apply_step!(batch_solver)
-    evaluate_model!(batch_solver)
+    return
 end
+@inline _mpc_step_post_correction!(s::AbstractBatchMPCSolver) = zero_inactive_step!(s)
 
 function _update_active_mask!(batch_solver::AbstractBatchMPCSolver{T}) where T
     ws = batch_solver.state.workspace
@@ -131,16 +133,10 @@ function increment_k!(batch_solver::AbstractBatchMPCSolver)
     end
 end
 
-function mpc!(batch_solver::AbstractBatchMPCSolver)
-    while true
-        MadNLP.print_iter(batch_solver)
-        update_termination_criteria!(batch_solver)
-        changed = update_termination_status!(batch_solver)
-        if changed
-            update_active_set!(batch_solver)
-            active_batch_size(batch_solver) == 0 && return
-            _update_active_mask!(batch_solver)
-        end
-        mpc_step!(batch_solver)
-    end
+@inline function _post_termination_check!(batch_solver::AbstractBatchMPCSolver)
+    update_termination_status!(batch_solver) || return false
+    update_active_set!(batch_solver)
+    active_batch_size(batch_solver) == 0 && return true
+    _update_active_mask!(batch_solver)
+    return false
 end
