@@ -119,3 +119,20 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
     end
     return true
 end
+
+
+function dual_objective!(dual_obj, y_vals, rhs_vals, zl_r, xl_r, zu_r, xu_r,
+                         sum_lb, sum_ub, nlb, nub)
+    T = eltype(dual_obj)
+    batch_mapreduce!(*, +, zero(T), dual_obj, y_vals, rhs_vals)
+    dual_obj .*= -one(T)
+    if nlb > 0
+        batch_mapreduce!(*, +, zero(T), sum_lb, zl_r, xl_r)
+        dual_obj .+= sum_lb
+    end
+    if nub > 0
+        batch_mapreduce!(*, +, zero(T), sum_ub, zu_r, xu_r)
+        dual_obj .-= sum_ub
+    end
+    return dual_obj
+end

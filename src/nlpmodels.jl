@@ -1,3 +1,5 @@
+# TODO: split up MadNLPSolver similarly with problem/state
+
 function MadNLP.eval_f_wrapper(solver::MPCSolver, x::MadNLP.PrimalVector{T}) where {T}
     problem = solver.problem
     state = solver.state
