@@ -7,8 +7,10 @@ using CUDA
 using CUDA.CUSPARSE
 using KernelAbstractions
 using SparseArrays
+import LinearAlgebra: mul!, transpose
 import NLPModels
 import MadIPM
+import MadNLP
 
 include("cuda_wrapper.jl")
 
