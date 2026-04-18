@@ -35,7 +35,6 @@ function evaluate_model!(solver::MPCSolver)
 end
 
 function mpc_step!(solver::MPCSolver)
-    update_regularization!(solver, _regularization(solver))
     factorize_regularized_system!(solver)
     prediction_step!(solver)
     mehrotra_correction_direction!(solver)
@@ -111,7 +110,7 @@ end
 
 function mpc_step!(batch_solver::AbstractBatchMPCSolver)
     fill!(batch_solver.state.workspace._ls_error, zero(Int32))
-    factorize_system!(batch_solver)
+    factorize_regularized_system!(batch_solver)
     prediction_step!(batch_solver)
     mehrotra_correction_direction!(batch_solver)
     update_step!(_step_rule(batch_solver), batch_solver)
