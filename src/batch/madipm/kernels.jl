@@ -14,91 +14,9 @@ function dual_objective!(dual_obj, y_vals, rhs_vals, zl_r, xl_r, zu_r, xu_r,
     return dual_obj
 end
 
-function set_initial_primal_rhs!(solver::AbstractBatchMPCSolver)
-    p = solver.p
-    fill!(MadNLP.full(p), 0.0)
-    py = MadNLP.dual(p)
-    b = MadNLP.full(solver.c)
-
-    py .= .- b
-    return
-end
-
-function set_initial_dual_rhs!(solver::AbstractBatchMPCSolver)
-    p = solver.p
-    fill!(MadNLP.full(p), 0.0)
-    px = MadNLP.primal(p)
-    c = MadNLP.primal(solver.f)
-
-    px .= .- c
-    return
-end
-
-function set_predictive_rhs!(solver::AbstractBatchMPCSolver, kkt::AbstractBatchKKTSystem)
-    px = MadNLP.primal(solver.p)
-    py = MadNLP.dual(solver.p)
-    pzl = MadNLP.dual_lb(solver.p)
-    pzu = MadNLP.dual_ub(solver.p)
-    f = MadNLP.primal(solver.f)
-    c = MadNLP.full(solver.c)
-    zl = MadNLP.full(solver.zl)
-    zu = MadNLP.full(solver.zu)
-    jacl = MadNLP.full(solver.jacl)
-    xl_r = lower(solver.xl)
-    x_lr = lower(solver.x)
-    zl_r = lower(solver.zl)
-    xu_r = upper(solver.xu)
-    x_ur = upper(solver.x)
-    zu_r = upper(solver.zu)
-
-    fill!(MadNLP.full(solver.p), 0.0)
-
-    px .= .-f .+ zl .- zu .- jacl
-    py .= .-c
-    pzl .= (xl_r .- x_lr) .* zl_r
-    pzu .= (xu_r .- x_ur) .* zu_r
-    return
-end
-
-function set_correction_rhs!(bs::AbstractBatchMPCSolver, kkt::AbstractBatchKKTSystem, mu, correction_lb, correction_ub, ind_lb, ind_ub)
-    px = MadNLP.primal(bs.p)
-    py = MadNLP.dual(bs.p)
-    pzl = MadNLP.dual_lb(bs.p)
-    pzu = MadNLP.dual_ub(bs.p)
-    f = MadNLP.primal(bs.f)
-    c = MadNLP.full(bs.c)
-    zl = MadNLP.full(bs.zl)
-    zu = MadNLP.full(bs.zu)
-    jacl = MadNLP.full(bs.jacl)
-    xl_r = lower(bs.xl)
-    x_lr = lower(bs.x)
-    zl_r = lower(bs.zl)
-    xu_r = upper(bs.xu)
-    x_ur = upper(bs.x)
-    zu_r = upper(bs.zu)
-
-    px .= .-f .+ zl .- zu .- jacl
-    py .= .-c
-    pzl .= (xl_r .- x_lr) .* zl_r .+ mu .- correction_lb
-    pzu .= (xu_r .- x_ur) .* zu_r .- mu .- correction_ub
-    return
-end
-
-function get_correction!(
-    batch_solver::AbstractBatchMPCSolver,
-    correction_lb,
-    correction_ub
-)
-    dlb = MadNLP.dual_lb(batch_solver.d)
-    dub = MadNLP.dual_ub(batch_solver.d)
-
-    dx_lr = xp_lr(batch_solver.d)
-    dx_ur = xp_ur(batch_solver.d)
-
-    correction_lb .= dx_lr .* dlb
-    correction_ub .= dx_ur .* dub
-    return
-end
+# `set_initial_primal_rhs!`, `set_initial_dual_rhs!`, `set_predictive_rhs!`,
+# `set_correction_rhs!`, `get_correction!` are defined in
+# `unified_kernels.jl` and dispatch on `AnyMPCSolver{T}`.
 
 function _set_aug_diagonal_reg_unmasked!(kkt, solver::AbstractBatchMPCSolver)
     kkt.reg .= solver.del_w

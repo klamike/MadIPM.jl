@@ -80,6 +80,38 @@ mutable struct MPCSolver{T, P <: MPCProblem{T}, S <: MPCState{T}} <: MadNLP.Abst
     state::S
 end
 
+# ---------- accessors for unified IPM kernels (scalar half) ----------
+# `AbstractBatchMPCSolver` is defined in src/batch/utils.jl; the matching
+# accessors for batch live in src/batch/structure.jl.
+
+@inline _opt(s::MPCSolver)      = s.problem.opt
+@inline _logger(s::MPCSolver)   = s.problem.logger
+@inline _nlb(s::MPCSolver)      = s.problem.nlb
+@inline _kkt(s::MPCSolver)      = s.problem.kkt
+
+@inline _x(s::MPCSolver)        = s.state.x
+@inline _zl(s::MPCSolver)       = s.state.zl
+@inline _f(s::MPCSolver)        = s.state.f
+@inline _y(s::MPCSolver)        = s.state.y
+@inline _c(s::MPCSolver)        = s.state.c
+@inline _jacl(s::MPCSolver)     = s.state.jacl
+@inline _p(s::MPCSolver)        = s.state.p
+@inline _d(s::MPCSolver)        = s.state.d
+
+@inline _x_lr(s::MPCSolver)     = s.state.x_lr
+@inline _xl_r(s::MPCSolver{T}) where {T} = zero(T)         # std form: lvar = 0
+@inline _zl_r(s::MPCSolver)     = s.state.zl_r
+@inline _dx_lr(s::MPCSolver)    = s.state.dx_lr
+@inline _dz_lb(s::MPCSolver)    = MadNLP.dual_lb(s.state.d)
+
+@inline _correction_lb(s::MPCSolver) = s.state.correction_lb
+
+@inline _alpha_p(s::MPCSolver) = s.state.alpha_p
+@inline _alpha_d(s::MPCSolver) = s.state.alpha_d
+@inline _del_w(s::MPCSolver)   = s.state.del_w
+@inline _del_c(s::MPCSolver)   = s.state.del_c
+@inline _mu(s::MPCSolver)      = s.state.mu
+
 function MPCSolver(nlp::Union{LinearModel, QuadraticModel}; kwargs...)
     std_nlp, workspace = standard_form(nlp)
     options = load_options(std_nlp; kwargs...)

@@ -119,6 +119,44 @@ end
 
 _get_ind_lb(bs::AbstractBatchMPCSolver) = bs.bcb.ind_lb
 _get_ind_ub(bs::AbstractBatchMPCSolver) = bs.bcb.ind_ub
+
+# ---------- accessors for unified IPM kernels (batch half) ----------
+# Mirror the scalar accessors in src/structure.jl. Each batch accessor
+# returns a `(dim, bs)` matrix view (or `(1, bs)` for per-instance scalars
+# such as `α_p`, `δ_w`, `μ`) so the same broadcasted expressions in the
+# unified kernels work identically on scalar (`Vector`/`T`) and batch
+# (`Matrix`/`Matrix(1,bs)`) storage.
+
+@inline _opt(s::AbstractBatchMPCSolver)    = s.opt
+@inline _logger(s::AbstractBatchMPCSolver) = s.logger
+@inline _nlb(s::AbstractBatchMPCSolver)    = s.d.nlb
+@inline _kkt(s::AbstractBatchMPCSolver)    = s.kkt
+
+@inline _x(s::AbstractBatchMPCSolver)      = s.x
+@inline _zl(s::AbstractBatchMPCSolver)     = s.zl
+@inline _f(s::AbstractBatchMPCSolver)      = s.f
+@inline _y(s::AbstractBatchMPCSolver)      = MadNLP.full(s.y)
+@inline _c(s::AbstractBatchMPCSolver)      = MadNLP.full(s.c)
+@inline _jacl(s::AbstractBatchMPCSolver)   = MadNLP.full(s.jacl)
+@inline _p(s::AbstractBatchMPCSolver)      = s.p
+@inline _d(s::AbstractBatchMPCSolver)      = s.d
+
+@inline _x_lr(s::AbstractBatchMPCSolver)   = lower(s.x)
+@inline _xl_r(s::AbstractBatchMPCSolver)   = lower(s.xl)
+@inline _zl_r(s::AbstractBatchMPCSolver)   = lower(s.zl)
+@inline _dx_lr(s::AbstractBatchMPCSolver)  = xp_lr(s.d)
+@inline _dz_lb(s::AbstractBatchMPCSolver)  = MadNLP.dual_lb(s.d)
+
+@inline _correction_lb(s::AbstractBatchMPCSolver) = MadNLP.full(s.correction_lb)
+
+@inline _alpha_p(s::AbstractBatchMPCSolver) = s.workspace.alpha_p
+@inline _alpha_d(s::AbstractBatchMPCSolver) = s.workspace.alpha_d
+@inline _del_w(s::AbstractBatchMPCSolver)   = s.del_w
+@inline _del_c(s::AbstractBatchMPCSolver)   = s.del_c
+@inline _mu(s::AbstractBatchMPCSolver)      = s.workspace.mu_batch
+
+# Union over both solver flavours used by the unified IPM kernels.
+const AnyMPCSolver{T} = Union{MPCSolver{T}, AbstractBatchMPCSolver{T}}
 active_batch_size(bs::AbstractBatchMPCSolver) = local_batch_size(active_view(bs.batch_views))
 
 function update_active_set!(state::BatchViewState, status::Vector{MadNLP.Status})

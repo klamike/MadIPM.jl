@@ -1,46 +1,86 @@
-function set_initial_primal_rhs!(solver::MPCSolver)
-    state = solver.state
-    fill!(full(state.p), zero(eltype(state.y)))
-    MadNLP.dual(state.p) .= .-state.c
+# IPM kernels.
+#
+# Many kernels are unified across the scalar `MPCSolver` and the batched
+# `UniformBatchMPCSolver` via dispatch on `AnyMPCSolver{T}` (defined in
+# src/batch/structure.jl). The accessors (`_x_lr`, `_zl_r`, `_alpha_p`,
+# `_del_w`, `_mu`, ...) live alongside each solver type and return the right
+# shape — `T`/`Vector` on scalar, `Matrix(1,bs)`/`Matrix(dim,bs)` on batch —
+# so the same broadcast expressions work on both.
+#
+# A handful of operations stay specialized:
+#   * `set_aug_diagonal_reg!` — KKT-system specific (different fields per
+#     KKT type) and batch has masked / unmasked variants for the active set.
+#   * `_xz_sum` / `get_complementarity_measure` /
+#     `get_affine_complementarity_measure` — scalar uses `mapreduce`, batch
+#     uses `batch_mapreduce!`; signatures differ.
+#   * `update_step!` for `MehrotraAdaptiveStep` — scalar's tight scalar-state
+#     formulation vs batch's per-column kernel.
+#   * `init_regularization!` / `update_regularization!` — scalar mutates a
+#     single `T`, batch mutates an `MT(1, bs)`.
+#
+# This file is loaded *after* the batch infrastructure so that
+# `AnyMPCSolver{T}` is in scope.
+
+# ---------- unified IPM RHS / correction kernels ----------
+
+function set_initial_primal_rhs!(s::AnyMPCSolver{T}) where {T}
+    p = _p(s)
+    fill!(MadNLP.full(p), zero(T))
+    MadNLP.dual(p) .= .-_c(s)
     return
 end
 
-function set_initial_dual_rhs!(solver::MPCSolver)
-    state = solver.state
-    fill!(full(state.p), zero(eltype(state.y)))
-    MadNLP.primal(state.p) .= .-MadNLP.primal(state.f)
+function set_initial_dual_rhs!(s::AnyMPCSolver{T}) where {T}
+    p = _p(s)
+    fill!(MadNLP.full(p), zero(T))
+    MadNLP.primal(p) .= .-MadNLP.primal(_f(s))
     return
 end
 
-function set_predictive_rhs!(solver::MPCSolver, kkt::MadNLP.AbstractKKTSystem)
-    state = solver.state
-    px = MadNLP.primal(state.p)
-    py = MadNLP.dual(state.p)
-    pzl = MadNLP.dual_lb(state.p)
-    f = MadNLP.primal(state.f)
-    fill!(MadNLP.full(state.p), zero(eltype(state.y)))
-    px .= .-f .+ MadNLP.full(state.zl) .- state.jacl
-    py .= .-state.c
-    pzl .= .-state.x_lr .* state.zl_r
+function set_predictive_rhs!(s::AnyMPCSolver{T}, ::MadNLP.AbstractKKTSystem) where {T}
+    _set_predictive_rhs_impl!(s)
+end
+function set_predictive_rhs!(s::AbstractBatchMPCSolver{T}, ::AbstractBatchKKTSystem) where {T}
+    _set_predictive_rhs_impl!(s)
+end
+
+@inline function _set_predictive_rhs_impl!(s::AnyMPCSolver{T}) where {T}
+    p = _p(s)
+    fill!(MadNLP.full(p), zero(T))
+    MadNLP.primal(p)  .= .-MadNLP.primal(_f(s)) .+ MadNLP.full(_zl(s)) .- _jacl(s)
+    MadNLP.dual(p)    .= .-_c(s)
+    MadNLP.dual_lb(p) .= (_xl_r(s) .- _x_lr(s)) .* _zl_r(s)
     return
 end
 
-function set_correction_rhs!(solver::MPCSolver{T}, kkt::MadNLP.AbstractKKTSystem, mu::T, correction_lb::AbstractVector{T}) where {T}
-    state = solver.state
-    px = MadNLP.primal(state.p)
-    py = MadNLP.dual(state.p)
-    pzl = MadNLP.dual_lb(state.p)
-    px .= .-MadNLP.primal(state.f) .+ MadNLP.full(state.zl) .- state.jacl
-    py .= .-state.c
-    pzl .= .-state.x_lr .* state.zl_r .+ mu .- correction_lb
+function set_correction_rhs!(s::AnyMPCSolver{T}, ::MadNLP.AbstractKKTSystem, mu, correction_lb) where {T}
+    _set_correction_rhs_impl!(s, mu, correction_lb)
+end
+function set_correction_rhs!(s::AbstractBatchMPCSolver{T}, ::AbstractBatchKKTSystem, mu, correction_lb) where {T}
+    _set_correction_rhs_impl!(s, mu, correction_lb)
+end
+
+@inline function _set_correction_rhs_impl!(s::AnyMPCSolver{T}, mu, correction_lb) where {T}
+    p = _p(s)
+    MadNLP.primal(p)  .= .-MadNLP.primal(_f(s)) .+ MadNLP.full(_zl(s)) .- _jacl(s)
+    MadNLP.dual(p)    .= .-_c(s)
+    MadNLP.dual_lb(p) .= (_xl_r(s) .- _x_lr(s)) .* _zl_r(s) .+ mu .- correction_lb
     return
 end
 
-function get_correction!(solver::MPCSolver, correction_lb)
-    state = solver.state
-    correction_lb .= state.dx_lr .* MadNLP.dual_lb(state.d)
+function get_correction!(s::AnyMPCSolver, correction_lb)
+    correction_lb .= _dx_lr(s) .* _dz_lb(s)
     return
 end
+
+# Backwards-compat for the std-form-only batch IPM call sites that still pass
+# UB-side scratch (always size 0) and the index arrays.
+set_correction_rhs!(s::AbstractBatchMPCSolver, kkt::AbstractBatchKKTSystem, mu, correction_lb, _correction_ub, _ind_lb, _ind_ub) =
+    set_correction_rhs!(s, kkt, mu, correction_lb)
+get_correction!(s::AbstractBatchMPCSolver, correction_lb, _correction_ub) =
+    get_correction!(s, correction_lb)
+
+# ---------- KKT-system-specific augmented-diagonal setup (scalar) ----------
 
 function set_aug_diagonal_reg!(kkt::MadNLP.AbstractKKTSystem{T}, solver::MPCSolver{T}) where {T}
     state = solver.state
@@ -63,17 +103,21 @@ function set_aug_diagonal_reg!(kkt::MadNLP.ScaledSparseKKTSystem{T}, solver::MPC
     return
 end
 
+# ---------- complementarity measures (scalar — batch lives in batch/madipm) ----------
+
 function _xz_sum(solver::MPCSolver)
     x = solver.state.x_lr
     isempty(x) && return zero(eltype(x))
     return mapreduce(*, +, x, solver.state.zl_r; init = zero(eltype(x)))
 end
 
-get_complementarity_measure(solver::MPCSolver) = isempty(solver.state.x_lr) ? zero(eltype(solver.state.y)) : _xz_sum(solver) / length(solver.state.x_lr)
+get_complementarity_measure(solver::MPCSolver) =
+    isempty(solver.state.x_lr) ? zero(eltype(solver.state.y)) :
+        _xz_sum(solver) / length(solver.state.x_lr)
 
 function update_barrier!(rule::Mehrotra, solver::MPCSolver{T}, mu_affine) where {T}
     problem = solver.problem
-    state = solver.state
+    state   = solver.state
     mu_curr = get_complementarity_measure(solver)
     sigma = if problem.nlb > 0
         iszero(mu_curr) ? one(T) : clamp((mu_affine / mu_curr)^3, T(1e-6), T(10))
@@ -95,6 +139,8 @@ function get_affine_complementarity_measure(solver::MPCSolver, alpha_p, alpha_d)
     ) / length(state.x_lr)
 end
 
+# ---------- step rules (scalar) ----------
+
 function get_alpha_max(v::AbstractVector{T}, dv, tau::T) where {T}
     return mapreduce(
         (dvi, vi, i) -> ((dvi < 0 ? (-vi) * tau / dvi : Inf), i),
@@ -112,7 +158,8 @@ function get_fraction_to_boundary_step(solver::MPCSolver, tau)
 end
 
 get_tau(rule::ConservativeStep, solver::MPCSolver) = rule.tau
-get_tau(rule::AdaptiveStep, solver::MPCSolver) = max(one(typeof(solver.state.mu)) - solver.state.mu, typeof(solver.state.mu)(rule.tau_min))
+get_tau(rule::AdaptiveStep, solver::MPCSolver) =
+    max(one(typeof(solver.state.mu)) - solver.state.mu, typeof(solver.state.mu)(rule.tau_min))
 
 function update_step!(rule::Union{ConservativeStep, AdaptiveStep}, solver::MPCSolver)
     state = solver.state
@@ -147,13 +194,16 @@ function update_step!(rule::MehrotraAdaptiveStep, solver::MPCSolver)
     return
 end
 
+# ---------- regularization (helpers shared by scalar and batch) ----------
+
 _init_reg(::NoRegularization, ::Type{T}, _, _) where {T} = (one(T), zero(T))
 _init_reg(r::FixedRegularization, ::Type{T}, _, _) where {T} = (one(T), T(r.delta_d))
 _init_reg(r::AdaptiveRegularization, ::Type{T}, _, _) where {T} = (T(r.init_delta_p), T(r.init_delta_d))
 
 _update_reg(::NoRegularization, ::Type{T}, _, _) where {T} = (zero(T), zero(T))
 _update_reg(r::FixedRegularization, ::Type{T}, _, _) where {T} = (T(r.delta_p), T(r.delta_d))
-_update_reg(r::AdaptiveRegularization, ::Type{T}, dw, dc) where {T} = (max(dw / T(10), T(r.delta_min)), min(dc / T(10), -T(r.delta_min)))
+_update_reg(r::AdaptiveRegularization, ::Type{T}, dw, dc) where {T} =
+    (max(dw / T(10), T(r.delta_min)), min(dc / T(10), -T(r.delta_min)))
 
 function init_regularization!(solver::MPCSolver, reg::AbstractRegularization)
     T = eltype(solver.state.y)
