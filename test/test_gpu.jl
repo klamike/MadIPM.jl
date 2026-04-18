@@ -55,3 +55,33 @@ import BatchQuadraticModels as BQM
     @test Array(updated.solution) ≈ Array(reference.solution) atol=1e-6
     @test updated.objective ≈ reference.objective atol=1e-6
 end
+
+@testset "MadIPMCUDA batch (madipm_batch on GPU)" begin
+    using SparseArrays
+    A = sparse([1.0 1.0])
+    qp_template = BQM.QuadraticModel(BQM.QPData(A, [1.0, 1.0], sparse([0.0 0.0; 0.0 0.0]);
+        lcon = [1.0], ucon = [1.0], lvar = [0.0, 0.0], uvar = [1.0, 1.0], c0 = 0.0))
+    nbatch = 3
+    bqp_cpu = BQM.ObjRHSBatchQuadraticModel(qp_template, nbatch)
+    bqp_cpu.c_batch    .= [1.0  5.0 -2.0; 2.0  1.0  3.0]
+    for j in 1:nbatch
+        bqp_cpu.meta.lcon[:, j] .= [1.0]
+        bqp_cpu.meta.ucon[:, j] .= [1.0]
+        bqp_cpu.meta.lvar[:, j] .= [0.0, 0.0]
+        bqp_cpu.meta.uvar[:, j] .= [1.0, 1.0]
+    end
+    bqp_gpu = adapt(CuArray, bqp_cpu)
+
+    stats = madipm_batch(bqp_gpu;
+        kkt_system    = MadIPM.NormalKKTSystem,
+        linear_solver = MadNLPGPU.CUDSSSolver,
+        cudss_algorithm = MadNLP.CHOLESKY,
+        print_level   = MadNLP.ERROR,
+    )
+    for j in 1:nbatch
+        @test stats.status[j] == MadNLP.SOLVE_SUCCEEDED
+    end
+    @test Array(stats.objective)[1] ≈ 1.0  atol = 1e-5
+    @test Array(stats.objective)[2] ≈ 1.0  atol = 1e-5
+    @test Array(stats.objective)[3] ≈ -2.0 atol = 1e-5
+end
