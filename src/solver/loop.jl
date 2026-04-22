@@ -1,7 +1,11 @@
-# IPM iteration: predictor-corrector + step + apply + evaluate, and the
-# enclosing `mpc!` loop. Stays specialized: scalar uses BLAS axpy! and
-# direct eval wrappers; batch uses broadcast (FMA-matched per CLAUDE.md)
-# and active-set bookkeeping.
+# ============================================================================
+# MPC iteration pipeline.
+#
+# `mpc!` drives the main loop: factor → predictor → corrector → step → eval.
+# The `_mpc_step_pre!` / `_mpc_step_post_correction!` / `_apply_step_post!` /
+# `_post_termination_check!` hooks are no-ops on the scalar path; the batch
+# path specializes them for active-set bookkeeping.
+# ============================================================================
 
 # ---------- scalar ----------
 
@@ -15,7 +19,7 @@ function prediction_step!(solver::MPCSolver)
     return
 end
 
-function apply_step!(s::AnyMPCSolver)
+function apply_step!(s::MaybeBatchMPCSolver)
     αp = _alpha_p(s)
     αd = _alpha_d(s)
     d  = _d(s)
@@ -31,7 +35,7 @@ end
     return
 end
 
-function evaluate_model!(s::AnyMPCSolver)
+function evaluate_model!(s::MaybeBatchMPCSolver)
     _evaluate_model_calls!(s)
     MadNLP.jtprod!(_jacl(s), _kkt(s), s.state.y)
     return
@@ -45,7 +49,7 @@ end
     return
 end
 
-function mpc_step!(s::AnyMPCSolver)
+function mpc_step!(s::MaybeBatchMPCSolver)
     _mpc_step_pre!(s)
     factorize_regularized_system!(s)
     prediction_step!(s)
@@ -60,7 +64,7 @@ end
 @inline _mpc_step_pre!(::MPCSolver) = nothing
 @inline _mpc_step_post_correction!(::MPCSolver) = nothing
 
-function mpc!(s::AnyMPCSolver)
+function mpc!(s::MaybeBatchMPCSolver)
     while true
         MadNLP.print_iter(s)
         update_termination_criteria!(s)
@@ -71,9 +75,14 @@ end
 
 @inline _post_termination_check!(solver::MPCSolver) = solver.state.status != MadNLP.REGULAR
 
-# ---------- batch ----------
 
-function prediction_step!(solver::AbstractBatchMPCSolver)
+
+# ---------- batch ----------
+# Same shape as scalar; hooks carry the active-set mask + per-instance
+# k/status bookkeeping. Converged instances get zeroed steps
+# (`zero_inactive_step!`) so they don't drift while peers keep iterating.
+
+function prediction_step!(solver::UniformBatchMPCSolver)
     state = solver.state
     ws = state.workspace
     affine_direction!(solver)
@@ -87,7 +96,7 @@ function prediction_step!(solver::AbstractBatchMPCSolver)
     return
 end
 
-@inline function _apply_step_post!(batch_solver::AbstractBatchMPCSolver)
+@inline function _apply_step_post!(batch_solver::UniformBatchMPCSolver)
     state = batch_solver.state
     ws = state.workspace
     d = state.d
@@ -100,7 +109,7 @@ end
     return
 end
 
-@inline function _evaluate_model_calls!(batch_solver::AbstractBatchMPCSolver)
+@inline function _evaluate_model_calls!(batch_solver::UniformBatchMPCSolver)
     state = batch_solver.state
     bcb = batch_solver.problem.bcb
     bx = state.workspace.bx
@@ -111,20 +120,20 @@ end
     return
 end
 
-@inline function _mpc_step_pre!(batch_solver::AbstractBatchMPCSolver)
+@inline function _mpc_step_pre!(batch_solver::UniformBatchMPCSolver)
     fill!(batch_solver.state.workspace._ls_error, zero(Int32))
     return
 end
-@inline _mpc_step_post_correction!(s::AbstractBatchMPCSolver) = zero_inactive_step!(s)
+@inline _mpc_step_post_correction!(s::UniformBatchMPCSolver) = zero_inactive_step!(s)
 
-function _update_active_mask!(batch_solver::AbstractBatchMPCSolver{T}) where T
+function _update_active_mask!(batch_solver::UniformBatchMPCSolver{T}) where T
     ws = batch_solver.state.workspace
     buf = ws.active_mask_cpu
     fill_batch_view_mask!(buf, active_view(batch_solver.problem.batch_views))
     copyto!(ws.active_mask, buf)
 end
 
-function increment_k!(batch_solver::AbstractBatchMPCSolver)
+function increment_k!(batch_solver::UniformBatchMPCSolver)
     state = batch_solver.state
     bcnt = state.cnt
     ws = state.workspace
@@ -135,7 +144,7 @@ function increment_k!(batch_solver::AbstractBatchMPCSolver)
     end
 end
 
-@inline function _post_termination_check!(batch_solver::AbstractBatchMPCSolver)
+@inline function _post_termination_check!(batch_solver::UniformBatchMPCSolver)
     update_termination_status!(batch_solver) || return false
     update_active_set!(batch_solver)
     active_batch_size(batch_solver) == 0 && return true

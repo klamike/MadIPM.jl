@@ -1,6 +1,11 @@
-# Termination criteria.
-# Stays specialized: scalar checks scalar status; batch evaluates the
-# branching tree on device into a (1, bs) status code matrix and aggregates.
+# ============================================================================
+# Termination checks.
+#
+# Compare the current iterate's primal / dual / complementarity residuals
+# against `opt.tol`; detect infeasibility / divergence / iteration-limit /
+# walltime exits. Scalar path sets `state.status`; batch path writes a
+# per-instance status vector that drives active-set pruning.
+# ============================================================================
 
 # ---------- scalar ----------
 
@@ -28,7 +33,13 @@ function update_termination_criteria!(solver::MPCSolver{T}) where {T}
     return
 end
 
+
+
 # ---------- batch ----------
+# `compute_term_gpu!` writes a per-instance status code into `_term_gpu`
+# via a nested `ifelse` that stays on-device (branch-free). The CPU
+# `update_termination_status!` reads those codes back and combines them
+# with walltime / max-iter limits to drive `ws.status`.
 
 function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
     ds = T(opt.divergence_scale)
@@ -60,7 +71,7 @@ function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
     minimum!(ws._any_nonregular_gpu, ws._term_gpu)
 end
 
-function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) where T
+function update_termination_criteria!(batch_solver::UniformBatchMPCSolver{T}) where T
     problem = batch_solver.problem
     state = batch_solver.state
     ws = state.workspace
@@ -89,7 +100,7 @@ function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) w
     return
 end
 
-function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
+function update_termination_status!(batch_solver::UniformBatchMPCSolver)
     problem = batch_solver.problem
     state = batch_solver.state
     ws = state.workspace
@@ -121,7 +132,6 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
     end
     return true
 end
-
 
 function dual_objective!(dual_obj, y_vals, rhs_vals, zl_r, xl_r, zu_r, xu_r,
                          sum_lb, sum_ub, nlb, nub)

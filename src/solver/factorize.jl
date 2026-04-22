@@ -1,18 +1,10 @@
-# Try-bump-retry factorization driver, unified across scalar and batch.
-#
-# Both flavours follow the same loop: set the augmented diagonal, factorize,
-# check whether anything failed, and bump the corresponding regularization
-# entries up by 100. The flavours diverge only in two hooks:
-#
-#   * `_check_factorization_status!(s)` — returns `nfailed`, the number of
-#     factorizations to retry. Scalar treats the whole solve as a single unit
-#     (returns 0 / 1); batch returns the number of per-instance failures and
-#     records them in the active-set buffer.
-#   * `_bump_failed_regularization!(s, nfailed)` — multiplies del_w / del_c
-#     by 100 for the failed entries. Scalar bumps the single scalar pair;
-#     batch bumps only the masked instances.
+# Primal-dual regularization + KKT factorization loop. Try up to 3 times:
+# shrink regularization via the schedule, set the augmented diagonal, factor,
+# and if factorization fails bump the failed instances' regularization by
+# 100× and retry. The `_check_factorization_status!` /
+# `_bump_failed_regularization!` hooks below specialize for scalar vs batch.
 
-function factorize_regularized_system!(s::AnyMPCSolver)
+function factorize_regularized_system!(s::MaybeBatchMPCSolver)
     update_regularization!(s, _regularization(s))
     max_trials = 3
     for _ in 1:max_trials
@@ -25,8 +17,7 @@ function factorize_regularized_system!(s::AnyMPCSolver)
     return
 end
 
-# ---------- scalar hooks ----------
-
+# ---------- scalar: 0/1 failure count, bump uniformly ----------
 @inline function _check_factorization_status!(solver::MPCSolver)
     return is_factorized(solver.problem.kkt.linear_solver) ? 0 : 1
 end
@@ -38,15 +29,21 @@ end
     return
 end
 
-# ---------- batch hooks ----------
 
-@inline function _check_factorization_status!(batch_solver::AbstractBatchMPCSolver)
+
+# ---------- batch: count failures + mask ----------
+# `is_factorized!` reports which local instances failed; the mask built
+# from `failed_locals` tells `_bump_failed_regularization!` which columns
+# get their regularization scaled so the next factorization attempt isn't
+# affected by peers that factored fine.
+
+@inline function _check_factorization_status!(batch_solver::UniformBatchMPCSolver)
     problem = batch_solver.problem
     failed_locals = problem.batch_views.selected_local_buffer
     return is_factorized!(failed_locals, problem.kkt.batch_solver, active_view(problem.batch_views))
 end
 
-function _bump_failed_regularization!(batch_solver::AbstractBatchMPCSolver{T}, nfailed::Int) where T
+function _bump_failed_regularization!(batch_solver::UniformBatchMPCSolver{T}, nfailed::Int) where T
     problem = batch_solver.problem
     state = batch_solver.state
     factor_view = active_view(problem.batch_views)

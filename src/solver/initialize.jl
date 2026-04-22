@@ -1,11 +1,10 @@
-# Solver initialization: warm-start primal/dual variables and prepare
-# scratch state. The first half (factorize + two LS solves + initial zl
-# from A'y + c) is unified across scalar and batch via accessors. The
-# second half — Mehrotra's per-instance shifts (δx / δz) — stays
-# specialized because scalar uses scalar `min` / `dot` / `sum` while batch
-# uses per-column `batch_mapreduce!`.
+# ---------- starting-point solve (shared scalar + batch) ----------
+# Build `(x, y, z)` from a single KKT factorization by solving two RHS:
+# first with `-c` on the dual side (sets `x`), then with `-∇f` on the primal
+# side (sets `y`). Bound multipliers `z` come from `res = Jᵀy + ∇f`.
+# The `init_starting_point!` methods below add Mehrotra's positivity shifts.
 
-function _init_starting_point_solve!(s::AnyMPCSolver)
+function _init_starting_point_solve!(s::MaybeBatchMPCSolver)
     kkt = _kkt(s)
     kkt.reg .= _del_w(s)
     pr_diag(kkt) .= _del_w(s)
@@ -27,8 +26,6 @@ function _init_starting_point_solve!(s::AnyMPCSolver)
     MadNLP.full(_zl(s)) .= res
     return
 end
-
-# ---------- scalar ----------
 
 function init_starting_point!(solver::MPCSolver)
     state = solver.state
@@ -53,6 +50,8 @@ function init_starting_point!(solver::MPCSolver)
     z .+= delta_z2
     return
 end
+
+# ---------- scalar solver bootstrap ----------
 
 function initialize!(solver::MPCSolver{T}) where {T}
     problem = solver.problem
@@ -84,9 +83,9 @@ function initialize!(solver::MPCSolver{T}) where {T}
     return
 end
 
-# ---------- batch ----------
+# ---------- batch solver bootstrap ----------
 
-function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
+function init_starting_point!(batch_solver::UniformBatchMPCSolver{T}) where T
     state = batch_solver.state
     _init_starting_point_solve!(batch_solver)
     x = MadNLP.primal(state.x)             # (n_tot, bs)
@@ -119,7 +118,7 @@ function init_starting_point!(batch_solver::AbstractBatchMPCSolver{T}) where T
     return
 end
 
-function initialize!(batch_solver::AbstractBatchMPCSolver{T}) where T
+function initialize!(batch_solver::UniformBatchMPCSolver{T}) where T
     problem = batch_solver.problem
     state = batch_solver.state
     opt = problem.opt
@@ -157,7 +156,7 @@ function initialize!(batch_solver::AbstractBatchMPCSolver{T}) where T
     return
 end
 
-function initialize_solver_state!(batch_solver::AbstractBatchMPCSolver{T}) where T
+function initialize_solver_state!(batch_solver::UniformBatchMPCSolver{T}) where T
     problem = batch_solver.problem
     state = batch_solver.state
     ws = state.workspace

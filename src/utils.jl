@@ -1,66 +1,118 @@
-#=
-    Barrier update
-=#
+# ---------- barrier / step-length policy types ----------
 
+"""
+    AbstractBarrierUpdate
+
+Strategy for updating the central-path parameter μ between iterations.
+Mehrotra's predictor-corrector is the only implementation today; kept
+dispatchable in case alternatives are added.
+"""
 abstract type AbstractBarrierUpdate end
+
+"""
+    Mehrotra()
+
+Predictor-corrector barrier update: computes μ_affine from an affine step,
+sets μ_new = max((μ_affine / μ_curr)^3, σ_min) · μ_curr.
+"""
 struct Mehrotra <: AbstractBarrierUpdate end
 
-#=
-    Step rule for next iterate
-=#
+"""
+    AbstractStepRule
 
+How the fraction-to-boundary ratio τ ∈ (0,1) is picked each iteration.
+Smaller τ is more conservative (slower but safer); larger τ cuts corners
+closer to the boundary.
+"""
 abstract type AbstractStepRule end
 
+"""
+    ConservativeStep(tau = 0.995)
+
+Fixed τ = `tau` on every iteration.
+"""
 @kwdef struct ConservativeStep{T} <: AbstractStepRule
     tau::T = T(0.995)
 end
 
+"""
+    AdaptiveStep(tau_min = 0.99)
+
+τ ramps from `tau_min` toward 1 as μ shrinks — tighter near the solution.
+"""
 @kwdef struct AdaptiveStep{T} <: AbstractStepRule
     tau_min::T = T(0.99)
 end
 
+"""
+    MehrotraAdaptiveStep(gamma_f = 0.99)
+
+Mehrotra's heuristic: derives τ from the complementarity drop achievable
+under the affine step. More aggressive than `AdaptiveStep` in good-condition
+regions.
+"""
 @kwdef struct MehrotraAdaptiveStep{T} <: AbstractStepRule
     gamma_f::T = T(0.99)
 end
 
-#=
-    Primal-dual regularization for KKT system
-=#
+# ---------- primal-dual regularization ----------
 
+"""
+    AbstractRegularization
+
+KKT-system regularization: adds `+δ_p I` to the primal block and `-δ_d I` to
+the dual block before factoring, to keep factorization stable when the
+optimum sits on a degenerate face.
+"""
 abstract type AbstractRegularization end
 
+"""
+    NoRegularization()
+
+Disable regularization. Only safe when the KKT system is guaranteed
+non-singular (e.g. `NormalKKTSystem` on a well-conditioned LP).
+"""
 struct NoRegularization <: AbstractRegularization end
 
+"""
+    FixedRegularization(delta_p, delta_d)
+
+Apply a constant `(δ_p, δ_d)` on every iteration. Robust but slightly slower
+near convergence.
+"""
 struct FixedRegularization{T} <: AbstractRegularization
     delta_p::T
     delta_d::T
 end
 
+"""
+    AdaptiveRegularization(init_delta_p, init_delta_d, delta_min)
+
+Start at `(init_delta_p, init_delta_d)` and shrink toward `delta_min` as the
+residual improves; inflate on factorization failures.
+"""
 struct AdaptiveRegularization{T} <: AbstractRegularization
     init_delta_p::T
     init_delta_d::T
     delta_min::T
 end
 
-#=
-    Utils for linear solvers
-=#
+# ---------- linear-solver introspection ----------
 
-function is_factorized(::MadNLP.AbstractLinearSolver)
-    return true # assume the system is factorized by default
-end
-function is_factorized(lin_solver::MadNLP.LDLSolver)
-    return LDLFactorizations.factorized(lin_solver.inner)
-end
-function is_factorized(lin_solver::MadNLP.CHOLMODSolver)
-    return issuccess(lin_solver.inner)
-end
+# Assume `factorize!(...)` succeeds unless the solver exposes a check.
+is_factorized(::MadNLP.AbstractLinearSolver) = true
+is_factorized(ls::MadNLP.LDLSolver)     = LDLFactorizations.factorized(ls.inner)
+is_factorized(ls::MadNLP.CHOLMODSolver) = issuccess(ls.inner)
 
+# ---------- IPM solver options ----------
 
-#=
-    Options
-=#
+"""
+    IPMOptions
 
+Collected options for the MPC solver — tolerances, KKT system, step/bound
+policies, and logging. Constructed indirectly by `load_options(nlp; ...)`
+which also builds the linear-solver options and logger.
+"""
 Base.@kwdef struct IPMOptions <: MadNLP.AbstractOptions
     tol::Float64 = 1e-8
     kkt_system::Type = MadNLP.SparseKKTSystem
@@ -87,6 +139,13 @@ end
 IPMOptions(nlp::NLPModels.AbstractNLPModel; linear_solver = MadNLP.default_sparse_solver(nlp), kwargs...) =
     IPMOptions(; linear_solver = linear_solver, kwargs...)
 
+"""
+    load_options(nlp; regularization, step_rule, barrier_update, cudss_algorithm, kwargs...)
+
+Build the full option bundle consumed by `MPCSolver` / `UniformBatchMPCSolver`:
+IPM options (from `IPMOptions`), linear-solver options (from the backend's
+`default_options`), the logger, and the three policy objects.
+"""
 function load_options(
     nlp;
     regularization::AbstractRegularization = FixedRegularization(1e-10, 1e-10),
@@ -118,6 +177,16 @@ function load_options(
     )
 end
 
+# ---------- sparse-matrix helpers ----------
+# COO → CSR conversion and JᵀJ (normal-system) structure building. Used by
+# `NormalKKTSystem`'s build path; GPU ext overrides with CUSPARSE / KA kernels.
+
+"""
+    coo_to_csr(n_rows, n_cols, Ai, Aj, Ax) -> (Bp, Bj, Bx)
+
+Convert a COO triple to a CSR row-pointer / col-index / value triple. Rows
+are not sorted; use the output as-is for symbolic normal-system construction.
+"""
 function coo_to_csr(
     n_rows,
     n_cols,
@@ -131,12 +200,11 @@ function coo_to_csr(
     Bj = zeros(Ti, nnz)
     Bx = zeros(Tv, nnz)
 
-    nnz = length(Ai)
     @inbounds for n in 1:nnz
         Bp[Ai[n]] += 1
     end
 
-    # cumsum the nnz per row to get Bp
+    # cumsum per-row counts to get Bp
     cumsum = 1
     @inbounds for i in 1:n_rows
         tmp = Bp[i]
@@ -163,12 +231,15 @@ function coo_to_csr(
     return (Bp, Bj, Bx)
 end
 
-function coo_to_csr(A::MadNLP.SparseMatrixCOO)
-    return coo_to_csr(
-        A.m, A.n, A.I, A.J, A.V,
-    )
-end
+coo_to_csr(A::MadNLP.SparseMatrixCOO) = coo_to_csr(A.m, A.n, A.I, A.J, A.V)
 
+"""
+    build_normal_system(n_rows, n_cols, Jtp, Jtj) -> (Cp, Cj)
+
+Precompute the symbolic sparsity pattern of `C = J D J'` (only its lower
+triangle) from the CSR structure of `Jᵀ` (`Jtp`, `Jtj`). Called once at
+`NormalKKTSystem` build time; `assemble_normal_system!` fills the values.
+"""
 function build_normal_system(
     n_rows,
     n_cols,
@@ -178,30 +249,25 @@ function build_normal_system(
     Cp = zeros(Ti, n_rows + 1)
     xb = zeros(UInt8, n_cols)
 
-    # Count nonzeros per rows
+    # Count nonzeros per row (only below-diagonal since JᵀJ is symmetric).
     nnz = 0
     @inbounds for i in 1:n_rows
         for c in Jtp[i]:Jtp[i+1]-1
-            j = Jtj[c]
-            xb[j] = UInt8(1)
+            xb[Jtj[c]] = UInt8(1)
         end
-        # JᵀJ is symmetric, store only lower triangular part
         for j in i:n_rows
             for c in Jtp[j]:Jtp[j+1]-1
-                k = Jtj[c]
-                if xb[k] == 1
+                if xb[Jtj[c]] == 1
                     nnz += 1
                     Cp[i] += 1
                     break
                 end
             end
         end
-        # Reset to 0
         for c in Jtp[i]:Jtp[i+1]-1
             xb[Jtj[c]] = UInt8(0)
         end
     end
-    # cumsum the nnz per row to get Bp
     cumsum = 1
     @inbounds for i in 1:n_rows
         tmp = Cp[i]
@@ -214,14 +280,11 @@ function build_normal_system(
     cnt = 0
     @inbounds for i in 1:n_rows
         for c in Jtp[i]:Jtp[i+1]-1
-            j = Jtj[c]
-            xb[j] = UInt8(1)
+            xb[Jtj[c]] = UInt8(1)
         end
-        # JᵀJ is symmetric, store only lower triangular part
         for j in i:n_rows
             for c in Jtp[j]:Jtp[j+1]-1
-                k = Jtj[c]
-                if xb[k] == 1
+                if xb[Jtj[c]] == 1
                     cnt += 1
                     Cj[cnt] = j
                     break
@@ -236,6 +299,12 @@ function build_normal_system(
     return (Cp, Cj)
 end
 
+"""
+    assemble_normal_system!(n_rows, n_cols, Jtp, Jtj, Jtx, Cp, Cj, Cx, Dx)
+
+Fill `Cx` with the values of `C = J D J'` (lower triangle, pattern from
+`build_normal_system`). `Dx::Vector` is the diagonal scaling.
+"""
 function assemble_normal_system!(
     n_rows,
     n_cols,
@@ -249,11 +318,12 @@ function assemble_normal_system!(
 ) where {Ti, Tv}
     buffer = zeros(Tv, n_cols)
     @inbounds for i in 1:n_rows
-        # Read row i
+        # Materialize row i of (D·Jᵀ) into `buffer`.
         for c in Jtp[i]:Jtp[i+1]-1
             j = Jtj[c]
             buffer[j] = Jtx[c] * Dx[j]
         end
+        # Dot with rows j ≥ i of Jᵀ to fill the lower-triangle slots.
         for c in Cp[i]:Cp[i+1]-1
             j = Cj[c]
             Cx[c] = Tv(0)
@@ -262,16 +332,17 @@ function assemble_normal_system!(
                 Cx[c] += buffer[k] * Jtx[d]
             end
         end
-        # Reset buffer
         for c in Jtp[i]:Jtp[i+1]-1
-            j = Jtj[c]
-            buffer[j] = Tv(0)
+            buffer[Jtj[c]] = Tv(0)
         end
     end
 end
 
-sparse_csc_format(::Type{<:Array}) = SparseArrays.SparseMatrixCSC
-_colptr(A::SparseArrays.SparseArrays.SparseMatrixCSC) = A.colptr
-_rowval(A::SparseArrays.SparseMatrixCSC) = A.rowval
-_nzval(A::SparseArrays.SparseMatrixCSC) = A.nzval
+# ---------- CSC accessor shims ----------
+# Single source of truth so scalar/GPU can share the same normal-system code
+# regardless of the concrete CSC type. GPU ext overrides with CuSparseMatrixCSC.
 
+sparse_csc_format(::Type{<:Array}) = SparseArrays.SparseMatrixCSC
+_colptr(A::SparseArrays.SparseMatrixCSC) = A.colptr
+_rowval(A::SparseArrays.SparseMatrixCSC) = A.rowval
+_nzval(A::SparseArrays.SparseMatrixCSC)  = A.nzval

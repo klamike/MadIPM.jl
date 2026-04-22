@@ -1,3 +1,28 @@
+"""
+    MadIPM
+
+Mehrotra predictor-corrector interior-point solver for LPs and convex QPs,
+with a batched variant that solves a collection of problems sharing the
+same sparsity/bound structure in parallel.
+
+Scalar entry points: [`madipm`](@ref), [`MPCSolver`](@ref), [`solve!`](@ref),
+[`update!`](@ref). Batch entry points: [`madipm_batch`](@ref),
+[`UniformBatchMPCSolver`](@ref). Problem data comes from
+[`BatchQuadraticModels`](@ref) (`LPData`/`QPData`/`LinearModel`/
+`QuadraticModel` scalar types + `BatchQuadraticModel` / `ObjRHSBatchQuadraticModel`
+for the batch).
+
+The solver reformulates the user's input into standard form
+(`Ax = b, z ≥ 0`) via `BatchQuadraticModels.standard_form`, runs the IPM on
+the standard-form KKT, then recovers the solution / multipliers in the
+original space. Repeat-solves with updated parameter values go through
+`update!(solver; ...)` which pushes changes through the presolve workspace
+without reconstructing anything.
+
+GPU support is activated automatically when CUDA + KernelAbstractions +
+MadNLPGPU are loaded; MathOptInterface integration is enabled by loading
+MathOptInterface.
+"""
 module MadIPM
 
 using Adapt
@@ -10,9 +35,11 @@ import MadNLP
 import MadNLP: full, LDLFactorizations
 import NLPModels
 import BatchQuadraticModels: LPData, LinearModel, QPData, QuadraticModel,
-    StandardFormWorkspace, BatchStandardFormWorkspace, standard_form, update_standard_form!,
+    StandardFormWorkspace, StandardFormBatchWorkspace,
+    standard_form, update_standard_form!,
     recover_primal, recover_primal!, recover_variable_multipliers!,
-    ObjRHSBatchQuadraticModel, BatchSparseOp, batch_spmv!, batch_mapreduce!, batch_maximum!,
+    ObjRHSBatchQuadraticModel, BatchQuadraticModel,
+    BatchSparseOperator, batch_spmv!, batch_mapreduce!, batch_maximum!,
     _copy_sparse_structure!, _copy_sparse_values!, sparse_operator, operator_sparse_matrix
 
 include("utils.jl")
@@ -21,8 +48,6 @@ include("structure.jl")
 include("logging.jl")
 include("nlpmodels.jl")
 
-# Batch infrastructure (madipm-agnostic): types, callbacks, KKT systems,
-# linear solver. These can be reused by any other batched IPM.
 include("batch/utils.jl")
 include("batch/views.jl")
 include("batch/madnlp/rhs.jl")
@@ -34,20 +59,14 @@ include("batch/madnlp/kernels.jl")
 include("batch/madnlp/nlpmodels.jl")
 include("batch/KKT/Sparse/normal.jl")
 
-# Linear-solve glue: scalar + batch `solve_system!` and `factorize_wrapper!`.
 include("solver/linear_solver.jl")
 
-# IPM kernels — split by section. Each file collocates the unified
-# `AnyMPCSolver` dispatch (when applicable) with the scalar (`MPCSolver`)
-# and batch (`AbstractBatchMPCSolver`) specializations.
 include("kernels/rhs.jl")
 include("kernels/aug_diagonal.jl")
 include("kernels/complementarity.jl")
 include("kernels/step.jl")
 include("kernels/regularization.jl")
 
-# Solver loop, split by section (mirrors src/kernels/). Each file
-# collocates the scalar and batch implementations of one phase.
 include("solver/initialize.jl")
 include("solver/termination.jl")
 include("solver/factorize.jl")

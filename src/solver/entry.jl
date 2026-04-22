@@ -1,74 +1,95 @@
-# Public entry points (`solve!`, `madipm`, `madipm_batch`) and batch
-# `print_iter` overload. Wraps the IPM loop with try/finally for status
-# reporting.
+# ============================================================================
+# Public entry points — scalar (`madipm`) and batch (`madipm_batch`).
+# ============================================================================
 
-# ---------- scalar ----------
+"""
+    solve!(solver::MPCSolver[, stats])
 
+Run the Mehrotra predictor-corrector IPM loop. Returns a
+`MadNLP.MadNLPExecutionStats` (allocated if not supplied). MadNLP's callback
+and linear-solver exceptions are caught and translated into termination
+statuses; `solver.problem.opt.rethrow_error = true` re-raises.
+"""
 solve!(solver::MPCSolver) = solve!(solver, MadNLP.MadNLPExecutionStats(solver))
 
 function solve!(solver::MPCSolver, stats::MadNLP.MadNLPExecutionStats)
-    problem = solver.problem
-    state = solver.state
+    problem, state = solver.problem, solver.state
     try
-        MadNLP.@notice(problem.logger, "This is MadIPM, running with $(MadNLP.introduce(problem.kkt.linear_solver))\n")
+        MadNLP.@notice(problem.logger,
+            "This is MadIPM, running with $(MadNLP.introduce(problem.kkt.linear_solver))\n")
         initialize!(solver)
         mpc!(solver)
     catch e
-        if e isa MadNLP.InvalidNumberException
-            if e.callback == :obj
-                state.status = MadNLP.INVALID_NUMBER_OBJECTIVE
-            elseif e.callback == :grad
-                state.status = MadNLP.INVALID_NUMBER_GRADIENT
-            elseif e.callback == :cons
-                state.status = MadNLP.INVALID_NUMBER_CONSTRAINTS
-            elseif e.callback == :jac
-                state.status = MadNLP.INVALID_NUMBER_JACOBIAN
-            elseif e.callback == :hess
-                state.status = MadNLP.INVALID_NUMBER_HESSIAN_LAGRANGIAN
-            else
-                state.status = MadNLP.INVALID_NUMBER_DETECTED
-            end
-        elseif e isa MadNLP.NotEnoughDegreesOfFreedomException
-            state.status = MadNLP.NOT_ENOUGH_DEGREES_OF_FREEDOM
-        elseif e isa MadNLP.LinearSolverException
-            state.status = MadNLP.ERROR_IN_STEP_COMPUTATION
-            problem.opt.rethrow_error && rethrow(e)
-        elseif e isa InterruptException
-            state.status = MadNLP.USER_REQUESTED_STOP
-            problem.opt.rethrow_error && rethrow(e)
-        else
-            state.status = MadNLP.INTERNAL_ERROR
-            problem.opt.rethrow_error && rethrow(e)
-        end
+        state.status = _translate_exception(e, problem.opt.rethrow_error)
     finally
         state.cnt.total_time = time() - state.cnt.start_time
-        if !(state.status < MadNLP.SOLVE_SUCCEEDED)
-            MadNLP.print_summary(solver)
-        end
-        MadNLP.@notice(problem.logger, "EXIT: $(MadNLP.get_status_output(state.status, problem.opt))")
+        state.status < MadNLP.SOLVE_SUCCEEDED || MadNLP.print_summary(solver)
+        MadNLP.@notice(problem.logger,
+            "EXIT: $(MadNLP.get_status_output(state.status, problem.opt))")
         finalize(problem.logger)
         update_solution!(stats, solver)
     end
-
     return stats
 end
 
-function madipm(m; kwargs...)
-    solver = MadIPM.MPCSolver(m; kwargs...)
-    return MadIPM.solve!(solver)
+# ---------- exception translation ----------
+
+function _translate_exception(e, rethrow_error::Bool)
+    if e isa MadNLP.InvalidNumberException
+        return _invalid_number_status(e.callback)
+    elseif e isa MadNLP.NotEnoughDegreesOfFreedomException
+        return MadNLP.NOT_ENOUGH_DEGREES_OF_FREEDOM
+    elseif e isa MadNLP.LinearSolverException
+        rethrow_error && rethrow(e)
+        return MadNLP.ERROR_IN_STEP_COMPUTATION
+    elseif e isa InterruptException
+        rethrow_error && rethrow(e)
+        return MadNLP.USER_REQUESTED_STOP
+    else
+        rethrow_error && rethrow(e)
+        return MadNLP.INTERNAL_ERROR
+    end
 end
 
-# ---------- batch ----------
+@inline _invalid_number_status(cb::Symbol) =
+    cb === :obj  ? MadNLP.INVALID_NUMBER_OBJECTIVE            :
+    cb === :grad ? MadNLP.INVALID_NUMBER_GRADIENT             :
+    cb === :cons ? MadNLP.INVALID_NUMBER_CONSTRAINTS          :
+    cb === :jac  ? MadNLP.INVALID_NUMBER_JACOBIAN             :
+    cb === :hess ? MadNLP.INVALID_NUMBER_HESSIAN_LAGRANGIAN   :
+                   MadNLP.INVALID_NUMBER_DETECTED
 
-function solve!(batch_solver::AbstractBatchMPCSolver{T, MT, VT}) where {T, MT, VT}
+"""
+    madipm(nlp; kwargs...)
+
+Build an [`MPCSolver`](@ref) for `nlp` (a `LinearModel` or `QuadraticModel`)
+and run it. Kwargs forward to [`IPMOptions`](@ref) / [`load_options`](@ref).
+"""
+madipm(nlp; kwargs...) = solve!(MPCSolver(nlp; kwargs...))
+
+# ============================================================================
+# Batch
+# ============================================================================
+
+"""
+    solve!(batch_solver::UniformBatchMPCSolver)
+
+Run the batched IPM loop. Returns a [`BatchExecutionStats`](@ref) carrying
+per-instance status / solution / multipliers. Per-instance failures mark
+`stats.status[i]` and let the rest of the batch finish;
+`rethrow_error = true` re-raises.
+"""
+function solve!(batch_solver::UniformBatchMPCSolver{T, MT, VT}) where {T, MT, VT}
     problem = batch_solver.problem
-    state = batch_solver.state
-    ws = state.workspace
-    bcb = problem.bcb
-    bs = problem.batch_size
+    state   = batch_solver.state
+    ws      = state.workspace
+    bcb     = problem.bcb
+    bs      = problem.batch_size
 
-    nvar_nlp = bcb.nlp.meta.nvar
-    ncon = bcb.ncon
+    nvar_nlp, ncon = problem.original_nlp === nothing ?
+        (bcb.nlp.meta.nvar, bcb.ncon) :
+        (NLPModels.get_nvar(problem.original_nlp),
+         NLPModels.get_ncon(problem.original_nlp))
     stats = BatchExecutionStats(MT, VT, nvar_nlp, ncon, bs)
 
     try
@@ -77,98 +98,63 @@ function solve!(batch_solver::AbstractBatchMPCSolver{T, MT, VT}) where {T, MT, V
         mpc!(batch_solver)
     catch e
         for i in 1:bs
-            if ws.status[i] == MadNLP.REGULAR
-                ws.status[i] = MadNLP.INTERNAL_ERROR
-            end
+            ws.status[i] == MadNLP.REGULAR && (ws.status[i] = MadNLP.INTERNAL_ERROR)
         end
         problem.opt.rethrow_error && rethrow(e)
     finally
-        bcnt = state.cnt
-        t_end = time()
-        bcnt.total_time .= t_end .- bcnt.start_time
+        state.cnt.total_time .= time() .- state.cnt.start_time
         update_solution!(stats, batch_solver)
-        status_counts = Dict{MadNLP.Status, Int}()
-        for i in 1:bs
-            s = ws.status[i]
-            status_counts[s] = get(status_counts, s, 0) + 1
-        end
-        for (s, cnt) in status_counts
-            MadNLP.@notice(problem.logger, "$(MadNLP.get_status_output(s, problem.opt)): $cnt/$bs")
-        end
+        _log_batch_summary(problem.logger, problem.opt, ws.status, bs)
     end
-
     return stats
 end
 
-"""
-    stats = madipm_batch(bnlp::ObjRHSBatchQuadraticModel; kwargs...)
-
-Solve a batch of LP/QP instances by reformulating each into standard form
-(`Ax = b, z ≥ 0`) via [`standard_form`](@ref), running the batch IPM over the
-shared std-form KKT, and recovering each primal/dual in the original space.
-
-The input batch must share the Jacobian/Hessian sparsity and bound kinds
-across instances (enforced by `standard_form`). Keyword arguments (other
-than `regularization`, `step_rule`, `barrier_update`, `print_level`, etc.)
-are forwarded to [`IPMOptions`](@ref).
-"""
-function madipm_batch(bnlp::ObjRHSBatchQuadraticModel; kwargs...)
-    std_bnlp, ws_batch = standard_form(bnlp)
-    batch_solver = UniformBatchMPCSolver(std_bnlp; kwargs...)
-    std_stats = solve!(batch_solver)
-    # Recover solution / multipliers in original space.
-    nbatch = std_stats.solution |> size |> last
-    orig_stats = BatchExecutionStats(typeof(bnlp.c_batch), typeof(bnlp.data.c), NLPModels.get_nvar(bnlp), NLPModels.get_ncon(bnlp), nbatch)
-    copyto!(orig_stats.status, std_stats.status)
-    recover_primal!(orig_stats.solution, ws_batch, std_stats.solution)
-    recover_variable_multipliers!(orig_stats.multipliers_L, orig_stats.multipliers_U, ws_batch, std_stats.multipliers_L)
-    BatchQuadraticModels._batch_gather_dual!(orig_stats.multipliers, ws_batch.con_start.row, std_stats.multipliers)
-    copyto!(orig_stats.dual_feas,   std_stats.dual_feas)
-    copyto!(orig_stats.primal_feas, std_stats.primal_feas)
-    copyto!(orig_stats.iter,        std_stats.iter)
-    copyto!(orig_stats.total_time,  std_stats.total_time)
-    # Objective in orig space: std obj already includes c_std' z + 1/2 z'Q z;
-    # add the presolve shift ws_batch.c0_batch.
-    copyto!(orig_stats.objective, std_stats.objective)
-    orig_stats.objective .+= ws_batch.c0_batch
-    # Constraints in original space: cᵢ = A xᵢ (per instance). A is shared.
-    mul!(orig_stats.constraints, bnlp.data.A, orig_stats.solution)
-    return orig_stats
+function _log_batch_summary(logger, opt, statuses, bs)
+    counts = Dict{MadNLP.Status, Int}()
+    for i in 1:bs
+        counts[statuses[i]] = get(counts, statuses[i], 0) + 1
+    end
+    for (s, n) in counts
+        MadNLP.@notice(logger, "$(MadNLP.get_status_output(s, opt)): $n/$bs")
+    end
+    return nothing
 end
 
-# Fallback for other batch NLP types — no std-form wrapping.
-function madipm_batch(bnlp::NLPModels.AbstractBatchNLPModel; kwargs...)
-    batch_solver = UniformBatchMPCSolver(bnlp; kwargs...)
-    return solve!(batch_solver)
-end
+"""
+    madipm_batch(bnlp::AbstractBatchNLPModel; kwargs...)
+
+Build a [`UniformBatchMPCSolver`](@ref) and run it. The batch must share
+Jacobian/Hessian sparsity and bound kinds (enforced by `standard_form`).
+"""
+madipm_batch(bnlp::NLPModels.AbstractBatchNLPModel; kwargs...) =
+    solve!(UniformBatchMPCSolver(bnlp; kwargs...))
 
 function IPMOptions(
-    bnlp::NLPModels.AbstractBatchNLPModel{T};
+    ::NLPModels.AbstractBatchNLPModel{T};
     linear_solver = MadNLP.LDLSolver,
     kwargs...,
-) where T
+) where {T}
     return IPMOptions(; linear_solver = linear_solver, kwargs...)
 end
 
-function MadNLP.print_iter(batch_solver::AbstractBatchMPCSolver)
-    problem = batch_solver.problem
-    state = batch_solver.state
-    logger = problem.logger
-    MadNLP.get_level(logger) > MadNLP.INFO && return
-    ws = state.workspace
-    bcnt = state.cnt
-    na = active_batch_size(batch_solver)
-    bs = problem.batch_size
-    k = maximum(bcnt.k)
+# ---------- batch iteration printer ----------
 
-    active_str = "$na/$bs"
+function MadNLP.print_iter(batch_solver::UniformBatchMPCSolver)
+    problem, state = batch_solver.problem, batch_solver.state
+    logger         = problem.logger
+    MadNLP.get_level(logger) > MadNLP.INFO && return nothing
+
+    ws   = state.workspace
+    bcnt = state.cnt
+    k    = maximum(bcnt.k)
+    na   = active_batch_size(batch_solver)
+    bs   = problem.batch_size
+
     mod(k, 10) == 0 && MadNLP.@info(logger, @sprintf(
         " iter  active  max_inf_pr  max_inf_du  max_inf_compl  max_alpha_p"))
-    MadNLP.@info(logger, @sprintf(
-        "%4i  ", k) * lpad(active_str, 6) * @sprintf(
-        "   %6.2e     %6.2e      %7.2e      %6.2e",
-        maximum(ws.inf_pr), maximum(ws.inf_du),
-        maximum(ws.inf_compl), maximum(ws.alpha_p),
-    ))
-    return
+    MadNLP.@info(logger, @sprintf("%4i  ", k) * lpad("$na/$bs", 6) *
+        @sprintf("   %6.2e     %6.2e      %7.2e      %6.2e",
+                 maximum(ws.inf_pr), maximum(ws.inf_du),
+                 maximum(ws.inf_compl), maximum(ws.alpha_p)))
+    return nothing
 end
