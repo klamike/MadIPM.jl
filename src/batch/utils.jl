@@ -1,28 +1,42 @@
-abstract type AbstractBatchMPCSolver{T, MT, VT} end
+# ---------- KKT-matrix view helpers ----------
 
+# Unsafe-wrap one column of a column-major batch matrix as a `Vector`-typed
+# alias without copying. Used to feed a per-instance kkt slice into scalar
+# code (e.g. MadNLP's `LoopedBatchLinearSolver` factors each column with a
+# plain scalar solver).
 function _madnlp_unsafe_column_wrap(mat::MT, n, shift, ::Type{VT}) where {T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}}
     return unsafe_wrap(VT, pointer(mat, shift), n)
 end
 
+# Rebuild a CSC with new nzval but shared structure — used to swap per-
+# instance values into a CSC shell without reallocating the symbolic layout.
 function _csc_with_nzval(A::SparseArrays.SparseMatrixCSC, nzval, n)
     return SparseArrays.SparseMatrixCSC(n, n, SparseArrays.getcolptr(A), SparseArrays.rowvals(A), nzval)
 end
 
-function zero_inactive_step!(batch_solver::AbstractBatchMPCSolver{T}) where T
-    ws = batch_solver.state.workspace
-    ws.alpha_p .*= ws.active_mask
-    ws.alpha_d .*= ws.active_mask
-end
+# ---------- `BatchSparseOperator` builders for the KKT's `J`, `Jᵀ`, `H` ----
+# Each `_build_*_op` assembles a per-instance SpMV operator over the batch
+# augmented system's nzvals matrix. The `coo_I` / `val_map` arguments index
+# into that matrix; `aug_csc_map` / `jac_range` / `hess_range` identify the
+# slots within the augmented COO triple.
 
+"""
+    _build_batch_op(nzVals, nz_map, val_map, coo_I, nrows) -> BatchSparseOperator
+
+Assemble a `BatchSparseOperator` from the KKT COO triple. `coo_I` is the row
+index per nonzero (operator rows); `val_map` is the col index (both the
+structural column and the B-row lookup during SpMV — they coincide here);
+`nz_map` is the row of the per-instance nzvals matrix to read for each
+scatter slot.
+"""
 function _build_batch_op(nzVals, nz_map, val_map, coo_I, nrows)
-    coo_I_int = _as_int_vec(coo_I)
+    coo_I_int   = _as_int_vec(coo_I)
+    val_map_int = _as_int_vec(val_map)
     rowptr, colidx = BatchQuadraticModels._coo_to_csr(coo_I_int, nrows)
     return BatchQuadraticModels._build_op(
         nzVals,
-        rowptr,
-        _as_int_vec(nz_map),
-        _as_int_vec(val_map),
-        colidx,
+        coo_I_int, val_map_int,       # structural rows, cols
+        rowptr, _as_int_vec(nz_map), val_map_int, colidx,
     )
 end
 
@@ -33,6 +47,9 @@ end
     return out
 end
 
+# `Jᵀ`: rows = var space (n_tot), cols = con space (m). Reads from
+# `jac_range` of the COO triple; its original I-coord is con-indexed
+# (needs `- n_tot` offset), J-coord is the var index used as the op's row.
 function _build_jt_op(
     aug_I, aug_J, jac_range, n_tot,
     nzVals::AbstractMatrix{T}, aug_csc_map,
@@ -47,6 +64,8 @@ function _build_jt_op(
     return _build_batch_op(nzVals, nz_map, con_map, coo_I, n_tot)
 end
 
+# `J`: rows = con space (m), cols = var space (n_tot). Mirror of `_build_jt_op`
+# with rows/cols swapped.
 function _build_j_op(
     aug_I, aug_J, jac_range, n_tot, m,
     nzVals::AbstractMatrix{T}, aug_csc_map,
@@ -61,6 +80,9 @@ function _build_j_op(
     return _build_batch_op(nzVals, nz_map, var_map, coo_I, m)
 end
 
+# `H` symmetric (both triangles). The COO triple carries only the lower
+# triangle (`hess_range`); we replicate off-diagonal entries into the upper
+# triangle via `offdiag_idx` so the resulting op computes full `Hx`.
 function _build_hess_op(
     aug_I, aug_J, n_tot, n_hess,
     nzVals::AbstractMatrix{T}, aug_csc_map,
@@ -79,20 +101,29 @@ function _build_hess_op(
     n_hess_sym = n_hess + length(offdiag_idx)
 
     coo_rows = similar(aug_I, n_hess_sym)
-    coo_rows[1:n_hess] .= hess_I
+    coo_rows[1:n_hess]     .= hess_I
     coo_rows[n_hess+1:end] .= hess_J[offdiag_idx]
 
     nz_map = similar(aug_csc_map, n_hess_sym)
-    nz_map[1:n_hess] .= hess_range
+    nz_map[1:n_hess]     .= hess_range
     nz_map[n_hess+1:end] .= n_tot .+ offdiag_idx
 
     var_map = similar(aug_csc_map, n_hess_sym)
-    var_map[1:n_hess] .= hess_J
+    var_map[1:n_hess]     .= hess_J
     var_map[n_hess+1:end] .= hess_I[offdiag_idx]
 
     return _build_batch_op(nzVals, nz_map, var_map, coo_rows, n_tot)
 end
 
+# ---------- public batch-vector container ----------
+
+"""
+    BatchVector{T, MT}
+
+Thin wrapper around a `(len, batch_size)` matrix carrying batched vector
+data. Exposes `MadNLP.full(bv) = bv.values` so MadNLP kernels that expect a
+vector-shaped view can operate on all batch columns at once via broadcast.
+"""
 struct BatchVector{T, MT<:AbstractMatrix{T}}
     values::MT
 end
@@ -108,6 +139,17 @@ function BatchVector(
     return BatchVector{T, MT}(values)
 end
 
+# ---------- batch stats / counters ----------
+
+"""
+    BatchExecutionStats{T, VT, MT}
+
+Public return value from `solve!(::UniformBatchMPCSolver)`. Matrix fields
+(`solution`, `constraints`, `multipliers`, `multipliers_L/U`) hold one
+column per batch instance; vector fields are `(nbatch,)`.
+
+`stats[i]` returns a `NamedTuple` with the i-th instance's slice.
+"""
 mutable struct BatchExecutionStats{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}}
     status::Vector{MadNLP.Status}  # (bs,)
     solution::MT                   # (nvar_nlp, bs)
@@ -140,20 +182,27 @@ end
 
 function Base.getindex(stats::BatchExecutionStats, i::Int)
     return (
-        status = stats.status[i],
-        solution = view(stats.solution, :, i),
-        objective = stats.objective[i],
-        constraints = view(stats.constraints, :, i),
-        dual_feas = stats.dual_feas[i],
-        primal_feas = stats.primal_feas[i],
-        multipliers = view(stats.multipliers, :, i),
+        status        = stats.status[i],
+        solution      = view(stats.solution,      :, i),
+        objective     = stats.objective[i],
+        constraints   = view(stats.constraints,   :, i),
+        dual_feas     = stats.dual_feas[i],
+        primal_feas   = stats.primal_feas[i],
+        multipliers   = view(stats.multipliers,   :, i),
         multipliers_L = view(stats.multipliers_L, :, i),
         multipliers_U = view(stats.multipliers_U, :, i),
-        iter = stats.iter[i],
-        total_time = stats.total_time[i],
+        iter          = stats.iter[i],
+        total_time    = stats.total_time[i],
     )
 end
 
+"""
+    BatchCounters
+
+Per-instance iteration / timing counters for the batched solve. The shared
+timing fields (`linear_solver_time`, `eval_function_time`) accumulate
+wall-clock across the whole batch; `k` and `total_time` are per-instance.
+"""
 mutable struct BatchCounters
     k::Vector{Int}              # per-instance iteration count
     start_time::Float64

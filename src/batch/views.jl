@@ -1,3 +1,18 @@
+# Active-set bookkeeping for the batched IPM. Each batched solve starts
+# with all `batch_size_root` instances active; as instances converge,
+# `update_active_set!` calls `select_local!` to produce a narrower view that
+# prunes them from the next iteration's work. `views` is a stack of layers
+# so we can roll back (e.g. when a tentative narrowing needs to be
+# re-expanded). `local_to_root` maps positions 1:n in the active view to
+# their original root-batch indices; `local_to_root_dev` keeps a device
+# copy for GPU kernels that need the mapping.
+
+"""
+    BatchView{VI32}
+
+One layer of the active-set stack. `n ≤ batch_size_root` instances are
+currently active; `local_to_root[1:n]` gives their original indices.
+"""
 mutable struct BatchView{VI32}
     batch_size_root::Int
     layer::Int
@@ -7,6 +22,13 @@ mutable struct BatchView{VI32}
     local_to_root_dev::VI32
 end
 
+"""
+    BatchViewState{V}
+
+Layered active-set view stack (root at `views[1]`). `active_layer` picks
+the current view. `selected_local_buffer` is scratch used by
+`update_active_set!` to build the next layer's selection in one pass.
+"""
 mutable struct BatchViewState{V<:BatchView}
     views::Vector{V}
     active_layer::Int

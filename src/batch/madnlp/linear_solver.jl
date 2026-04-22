@@ -1,5 +1,17 @@
-# FIXME: threads/polyester version
+"""
+    LoopedBatchLinearSolver{T, VT, LS}
 
+Default batched linear solver: carries a `Vector` of per-instance scalar
+solvers (one per batch column) and iterates through them for factorization
+and back-substitution. GPU backends override with native batched variants
+(e.g. CUDSS batch mode) via their ext.
+
+Every per-instance solver is a `MadNLP.AbstractLinearSolver` built from a
+column-strided slice of the batch nzvals matrix (`_madnlp_unsafe_column_wrap`
++ `_csc_with_nzval`) so factorization works in-place on the aggregate batch
+buffer without duplicating storage.
+"""
+# FIXME: threads/polyester version
 struct LoopedBatchLinearSolver{T, VT, LS<:MadNLP.AbstractLinearSolver{T}} <: MadNLP.AbstractLinearSolver{T}
     solvers::Vector{LS}
     batch_size::Int

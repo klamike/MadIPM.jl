@@ -1,3 +1,12 @@
+"""
+    UniformBatchWorkspace{T, VT, MT, MI, MI64}
+
+Scratch buffers shared across the batch IPM iteration: step-length / μ
+accumulators (all `(1, nbatch)` matrices so broadcasts stay on-backend),
+per-instance termination status, active-set mask, and full-size workspace
+vectors `bx`/`bf`/`bg`/`bv`. `_term_*` and `_any_nonregular_*` mirror GPU
+reductions into CPU counters without blocking the solver loop.
+"""
 struct UniformBatchWorkspace{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, MI<:AbstractMatrix{Int32}, MI64<:AbstractMatrix{Int64}}
     alpha_xl::MT
     alpha_xu::MT
@@ -40,46 +49,51 @@ struct UniformBatchWorkspace{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{T}, MI
     bv::MT
 end
 
-function UniformBatchWorkspace(::Type{MT}, ::Type{VT}, n::Int, m::Int, nlb::Int, nub::Int, batch_size::Int;
-                        nvar_nlp::Int=0) where {T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}}
-    _proto = MT(undef, 1, batch_size)
-    MI = typeof(similar(_proto, Int32))
-    MI64 = typeof(similar(_proto, Int64))
+function UniformBatchWorkspace(
+    ::Type{MT}, ::Type{VT},
+    n::Int, m::Int, nlb::Int, nub::Int, batch_size::Int;
+    nvar_nlp::Int = 0,
+) where {T, MT <: AbstractMatrix{T}, VT <: AbstractVector{T}}
+    proto = MT(undef, 1, batch_size)
+    MI    = typeof(similar(proto, Int32))
+    MI64  = typeof(similar(proto, Int64))
+    row() = MT(undef, 1, batch_size)  # (1, bs) scratch, matches proto's backend
+
     return UniformBatchWorkspace{T, VT, MT, MI, MI64}(
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # alpha_xl, alpha_xu
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # alpha_zl, alpha_zu
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # alpha_p, alpha_d
-        MT(undef, 1, batch_size),  # tau
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # mu_batch, mu_curr
-        MT(undef, 1, batch_size), MT(undef, 1, batch_size),  # mu_affine, sum_lb
-        MT(undef, 1, batch_size),  # sum_ub
-        MT(undef, 1, batch_size),  # obj_val
-        MT(undef, 1, batch_size),  # norm_b
-        MT(undef, 1, batch_size),  # norm_c
-        MT(undef, 1, batch_size),  # inf_pr
-        MT(undef, 1, batch_size),  # inf_du
-        MT(undef, 1, batch_size),  # inf_compl
-        MT(undef, 1, batch_size),  # best_complementarity
-        MT(undef, 1, batch_size),  # dual_obj
-        fill(MadNLP.INITIAL, batch_size),  # status
-        similar(_proto, Int64, 1, batch_size),    # _term_gpu
-        zeros(Int64, 1, batch_size),  # _term_cpu
-        fill!(similar(_proto, Int64, 1, 1), Int64(MadNLP.REGULAR)),  # _any_nonregular_gpu
-        fill(Int64(MadNLP.REGULAR), 1, 1),  # _any_nonregular_cpu
-        MT(undef, 1, batch_size),  # _norm_gpu_w
-        MT(undef, 1, batch_size),  # _norm_gpu_p
-        fill!(similar(_proto, Int32), zero(Int32)),  # _ls_error
-        fill!(MT(undef, 1, batch_size), one(T)),  # active_mask
-        ones(T, 1, batch_size),                    # active_mask_cpu
-        MT(undef, nvar_nlp, batch_size),   # bx
-        VT(undef, batch_size),  # bf
-        MT(undef, nvar_nlp, batch_size),   # bg
-        MT(undef, m, batch_size),          # bv
+        row(), row(), row(), row(),                                 # alpha_xl..alpha_zu
+        row(), row(), row(),                                        # alpha_p, alpha_d, tau
+        row(), row(), row(), row(), row(),                          # mu_batch, mu_curr, mu_affine, sum_lb, sum_ub
+        row(), row(), row(), row(), row(), row(), row(), row(),     # obj..dual_obj
+        fill(MadNLP.INITIAL, batch_size),                           # status
+        similar(proto, Int64, 1, batch_size),                       # _term_gpu
+        zeros(Int64, 1, batch_size),                                # _term_cpu
+        fill!(similar(proto, Int64, 1, 1), Int64(MadNLP.REGULAR)),  # _any_nonregular_gpu
+        fill(Int64(MadNLP.REGULAR), 1, 1),                          # _any_nonregular_cpu
+        row(), row(),                                               # _norm_gpu_w/_p
+        fill!(similar(proto, Int32), zero(Int32)),                  # _ls_error
+        fill!(row(), one(T)),                                       # active_mask
+        ones(T, 1, batch_size),                                     # active_mask_cpu
+        MT(undef, nvar_nlp, batch_size),                            # bx
+        VT(undef, batch_size),                                      # bf
+        MT(undef, nvar_nlp, batch_size),                            # bg
+        MT(undef, m, batch_size),                                   # bv
     )
 end
 
+"""
+    BatchMPCProblem{...}
+
+Static problem data for a batched solve. Mirrors [`MPCProblem`](@ref) but
+adds `bcb` (batch callback), `batch_views` (active-set bookkeeping), and
+`batch_size`. `original_nlp`/`workspace` are `nothing` when the solver is
+constructed directly from a standard-form batch NLP; otherwise they hold the
+original batch model and the BQM presolve workspace used to recover
+solutions in the original variable space.
+"""
 mutable struct BatchMPCProblem{BM, BCB, BVS, KKT<:AbstractBatchKKTSystem, REG<:AbstractRegularization, STEP<:AbstractStepRule, BARR<:AbstractBarrierUpdate}
-    nlp::BM
+    original_nlp::Any           # original-space batch model (nothing when input is already std-form)
+    nlp::BM                     # std-form batch model actually solved
+    workspace::Any              # StandardFormBatchWorkspace, or nothing
     bcb::BCB
     kkt::KKT
     opt::IPMOptions
@@ -91,6 +105,13 @@ mutable struct BatchMPCProblem{BM, BCB, BVS, KKT<:AbstractBatchKKTSystem, REG<:A
     batch_size::Int
 end
 
+"""
+    BatchMPCState{T, MT, VT}
+
+Mutable batched iterate state: per-instance primal/dual iterates as
+`(dim, nbatch)` matrices, search direction, scratch vectors, and the
+`UniformBatchWorkspace` with the aggregate scalars.
+"""
 mutable struct BatchMPCState{T, MT, VT}
     cnt::BatchCounters
 
@@ -117,58 +138,92 @@ mutable struct BatchMPCState{T, MT, VT}
     del_c::MT
 end
 
-mutable struct UniformBatchMPCSolver{T, MT, VT, P<:BatchMPCProblem, S<:BatchMPCState{T, MT, VT}} <: AbstractBatchMPCSolver{T, MT, VT}
+"""
+    UniformBatchMPCSolver{...}
+
+Batched Mehrotra predictor-corrector IPM solver. Input is a batched NLP
+(already standard-form, or an `ObjRHSBatchQuadraticModel`/`BatchQuadraticModel`
+that we standardize internally). Call `MadIPM.solve!(solver)` to run; each
+batch instance is solved through the shared solver loop with an active-set
+mask that prunes converged instances.
+"""
+mutable struct UniformBatchMPCSolver{T, MT, VT, P<:BatchMPCProblem, S<:BatchMPCState{T, MT, VT}}
     problem::P
     state::S
 end
 
-_get_ind_lb(bs::AbstractBatchMPCSolver) = bs.problem.bcb.ind_lb
-_get_ind_ub(bs::AbstractBatchMPCSolver) = bs.problem.bcb.ind_ub
+_get_ind_lb(bs::UniformBatchMPCSolver) = bs.problem.bcb.ind_lb
+_get_ind_ub(bs::UniformBatchMPCSolver) = bs.problem.bcb.ind_ub
 
-# ---------- accessors for unified IPM kernels (batch half) ----------
-# Mirror the scalar accessors in src/structure.jl. Each batch accessor
-# returns a `(dim, bs)` matrix view (or `(1, bs)` for per-instance scalars
-# such as `α_p`, `δ_w`, `μ`) so the same broadcasted expressions in the
-# unified kernels work identically on scalar (`Vector`/`T`) and batch
-# (`Matrix`/`Matrix(1,bs)`) storage.
+# Assert that `bnlp` is already in standard form: lvar == 0, uvar == +Inf,
+# lcon == ucon (all equalities). Called by the inner `UniformBatchMPCSolver`
+# ctor to catch users who pass a non-standardized model — they should go
+# through the `ObjRHSBatchQuadraticModel`/`BatchQuadraticModel` ctor instead,
+# which standardizes automatically.
+function _assert_standard_form(bnlp::NLPModels.AbstractBatchNLPModel{T}) where {T}
+    bm = bnlp.meta
+    # `all(==(·), ...)` runs on the host or device depending on where the
+    # arrays live — avoid materialising GPU matrices to CPU when there's
+    # nothing to gain.
+    all(==(zero(T)), bm.lvar) || throw(ArgumentError(
+        "UniformBatchMPCSolver expects a standard-form batch (lvar = 0); construct from an original-space ObjRHSBatchQuadraticModel/BatchQuadraticModel to standardize."))
+    all(==(T(Inf)), bm.uvar) || throw(ArgumentError(
+        "UniformBatchMPCSolver expects a standard-form batch (uvar = +Inf); construct from an original-space batch model to standardize."))
+    bm.lcon == bm.ucon || throw(ArgumentError(
+        "UniformBatchMPCSolver expects a standard-form batch (lcon == ucon, all equalities); construct from an original-space batch model to standardize."))
+    return nothing
+end
 
-@inline _opt(s::AbstractBatchMPCSolver)            = s.problem.opt
-@inline _logger(s::AbstractBatchMPCSolver)         = s.problem.logger
-@inline _kkt(s::AbstractBatchMPCSolver)            = s.problem.kkt
-@inline _step_rule(s::AbstractBatchMPCSolver)      = s.problem.step_rule
-@inline _regularization(s::AbstractBatchMPCSolver) = s.problem.regularization
-@inline _barrier_update(s::AbstractBatchMPCSolver) = s.problem.barrier_update
+function zero_inactive_step!(batch_solver::UniformBatchMPCSolver{T}) where T
+    ws = batch_solver.state.workspace
+    ws.alpha_p .*= ws.active_mask
+    ws.alpha_d .*= ws.active_mask
+end
 
-@inline _x(s::AbstractBatchMPCSolver)      = s.state.x
-@inline _zl(s::AbstractBatchMPCSolver)     = s.state.zl
-@inline _f(s::AbstractBatchMPCSolver)      = s.state.f
-@inline _y(s::AbstractBatchMPCSolver)      = MadNLP.full(s.state.y)
-@inline _c(s::AbstractBatchMPCSolver)      = MadNLP.full(s.state.c)
-@inline _jacl(s::AbstractBatchMPCSolver)   = MadNLP.full(s.state.jacl)
-@inline _p(s::AbstractBatchMPCSolver)      = s.state.p
-@inline _d(s::AbstractBatchMPCSolver)      = s.state.d
+# ---------- unified IPM kernel accessors (batch) ----------
+# Batched counterparts of the `_foo(solver)` accessors in `src/structure.jl`.
+# Keep names aligned so the kernels in `src/kernels/` and the solver loop
+# dispatch identically on `MPCSolver` and `UniformBatchMPCSolver`.
 
-@inline _x_lr(s::AbstractBatchMPCSolver)   = lower(s.state.x)
-@inline _xl_r(s::AbstractBatchMPCSolver)   = lower(s.state.xl)
-@inline _zl_r(s::AbstractBatchMPCSolver)   = lower(s.state.zl)
-@inline _dx_lr(s::AbstractBatchMPCSolver)  = xp_lr(s.state.d)
-@inline _dz_lb(s::AbstractBatchMPCSolver)  = MadNLP.dual_lb(s.state.d)
-@inline _x_ur(s::AbstractBatchMPCSolver)   = upper(s.state.x)
-@inline _xu_r(s::AbstractBatchMPCSolver)   = upper(s.state.xu)
-@inline _zu_r(s::AbstractBatchMPCSolver)   = upper(s.state.zu)
-@inline _dz_ub(s::AbstractBatchMPCSolver)  = MadNLP.dual_ub(s.state.d)
+@inline _opt(s::UniformBatchMPCSolver)            = s.problem.opt
+@inline _logger(s::UniformBatchMPCSolver)         = s.problem.logger
+@inline _kkt(s::UniformBatchMPCSolver)            = s.problem.kkt
+@inline _step_rule(s::UniformBatchMPCSolver)      = s.problem.step_rule
+@inline _regularization(s::UniformBatchMPCSolver) = s.problem.regularization
+@inline _barrier_update(s::UniformBatchMPCSolver) = s.problem.barrier_update
 
-@inline _correction_lb(s::AbstractBatchMPCSolver) = MadNLP.full(s.state.correction_lb)
+@inline _x(s::UniformBatchMPCSolver)    = s.state.x
+@inline _zl(s::UniformBatchMPCSolver)   = s.state.zl
+@inline _f(s::UniformBatchMPCSolver)    = s.state.f
+@inline _y(s::UniformBatchMPCSolver)    = MadNLP.full(s.state.y)
+@inline _c(s::UniformBatchMPCSolver)    = MadNLP.full(s.state.c)
+@inline _jacl(s::UniformBatchMPCSolver) = MadNLP.full(s.state.jacl)
+@inline _p(s::UniformBatchMPCSolver)    = s.state.p
+@inline _d(s::UniformBatchMPCSolver)    = s.state.d
 
-@inline _alpha_p(s::AbstractBatchMPCSolver) = s.state.workspace.alpha_p
-@inline _alpha_d(s::AbstractBatchMPCSolver) = s.state.workspace.alpha_d
-@inline _del_w(s::AbstractBatchMPCSolver)   = s.state.del_w
-@inline _del_c(s::AbstractBatchMPCSolver)   = s.state.del_c
-@inline _mu(s::AbstractBatchMPCSolver)      = s.state.workspace.mu_batch
+# Lower-bound slice.
+@inline _x_lr(s::UniformBatchMPCSolver)  = lower(s.state.x)
+@inline _xl_r(s::UniformBatchMPCSolver)  = lower(s.state.xl)
+@inline _zl_r(s::UniformBatchMPCSolver)  = lower(s.state.zl)
+@inline _dx_lr(s::UniformBatchMPCSolver) = xp_lr(s.state.d)
+@inline _dz_lb(s::UniformBatchMPCSolver) = MadNLP.dual_lb(s.state.d)
+# Upper-bound slice — unlike the scalar path, the batch std form *does* have
+# u-side multipliers (for var upper bounds mapped to equality rows).
+@inline _x_ur(s::UniformBatchMPCSolver)  = upper(s.state.x)
+@inline _xu_r(s::UniformBatchMPCSolver)  = upper(s.state.xu)
+@inline _zu_r(s::UniformBatchMPCSolver)  = upper(s.state.zu)
+@inline _dz_ub(s::UniformBatchMPCSolver) = MadNLP.dual_ub(s.state.d)
 
-# Union over both solver flavours used by the unified IPM kernels.
-const AnyMPCSolver{T} = Union{MPCSolver{T}, AbstractBatchMPCSolver{T}}
-active_batch_size(bs::AbstractBatchMPCSolver) = local_batch_size(active_view(bs.problem.batch_views))
+@inline _correction_lb(s::UniformBatchMPCSolver) = MadNLP.full(s.state.correction_lb)
+
+@inline _alpha_p(s::UniformBatchMPCSolver) = s.state.workspace.alpha_p
+@inline _alpha_d(s::UniformBatchMPCSolver) = s.state.workspace.alpha_d
+@inline _del_w(s::UniformBatchMPCSolver)   = s.state.del_w
+@inline _del_c(s::UniformBatchMPCSolver)   = s.state.del_c
+@inline _mu(s::UniformBatchMPCSolver)      = s.state.workspace.mu_batch
+
+const MaybeBatchMPCSolver{T} = Union{MPCSolver{T}, UniformBatchMPCSolver{T}}
+active_batch_size(bs::UniformBatchMPCSolver) = local_batch_size(active_view(bs.problem.batch_views))
 
 function update_active_set!(state::BatchViewState, status::Vector{MadNLP.Status})
     nselected = 0
@@ -185,7 +240,7 @@ function update_active_set!(state::BatchViewState, status::Vector{MadNLP.Status}
     return select_local!(state, state.selected_local_buffer, nselected; reset_slots=true)
 end
 
-update_active_set!(bs::AbstractBatchMPCSolver) = update_active_set!(bs.problem.batch_views, bs.state.workspace.status)
+update_active_set!(bs::UniformBatchMPCSolver) = update_active_set!(bs.problem.batch_views, bs.state.workspace.status)
 
 
 """
@@ -199,11 +254,13 @@ function UniformBatchMPCSolver(
     VI = typeof(similar(NLPModels.get_x0(bnlp), Int, 0)),
     uniformbatch_linear_solver = LoopedBatchLinearSolver,
     check_batch_structure::Bool = true,
+    check_standard_form::Bool = true,
     kwargs...,
 ) where {T, MT}
     bmeta = bnlp.meta
     batch_size = bmeta.nbatch
     @assert batch_size > 0 "Need at least one instance in batch"
+    check_standard_form && _assert_standard_form(bnlp)
 
     nvar_nlp = bmeta.nvar
 
@@ -224,69 +281,87 @@ function UniformBatchMPCSolver(
 
     cnt = BatchCounters(batch_size)
     bcb = MadNLP.create_callback(
-        UniformBatchCallback{T,VT,MT,VI},
-        bnlp;
-        fixed_variable_treatment=ipm_opt.fixed_variable_treatment,
-        equality_treatment=ipm_opt.equality_treatment,
-        check_batch_structure=check_batch_structure,
+        UniformBatchCallback{T, VT, MT, VI}, bnlp;
+        fixed_variable_treatment = ipm_opt.fixed_variable_treatment,
+        equality_treatment       = ipm_opt.equality_treatment,
+        check_batch_structure    = check_batch_structure,
     )
 
-    ind_lb = bcb.ind_lb
-    ind_ub = bcb.ind_ub
-
-    ns = length(bcb.ind_ineq)
-    nx = bcb.nvar
-    n = nx + ns
-    m = bcb.ncon
-    nlb = length(ind_lb)
-    nub = length(ind_ub)
-
-    batch_views = BatchViewState(bcb, batch_size)
+    ind_lb, ind_ub = bcb.ind_lb, bcb.ind_ub
+    nx, ns, m      = bcb.nvar, length(bcb.ind_ineq), bcb.ncon
+    n              = nx + ns
+    nlb, nub       = length(ind_lb), length(ind_ub)
+    batch_views    = BatchViewState(bcb, batch_size)
 
     batch_kkts = MadNLP.create_kkt_system(
-        ipm_opt.kkt_system,
-        bcb,
-        uniformbatch_linear_solver;
-        opt_linear_solver = opt_batch_ls,
-        batch_views = batch_views,
+        ipm_opt.kkt_system, bcb, uniformbatch_linear_solver;
+        opt_linear_solver = opt_batch_ls, batch_views = batch_views,
     )
 
-    batch_x  = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_xl = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_xu = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_zl = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_zu = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
-    batch_f  = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
+    _pv()  = BatchPrimalVector(MT, VT, nx, ns, batch_size, ind_lb, ind_ub)
+    _ukv() = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
 
-    batch_d  = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
-    batch_p  = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
-    batch_w1 = BatchUnreducedKKTVector(MT, VT, n, m, nlb, nub, batch_size, ind_lb, ind_ub)
+    x, xl, xu, zl, zu, f = _pv(), _pv(), _pv(), _pv(), _pv(), _pv()
+    d, p, w1             = _ukv(), _ukv(), _ukv()
 
-    batch_correction_lb = BatchVector(MT, VT, nlb, batch_size)
-    batch_jacl          = BatchVector(MT, VT, n, batch_size)
-    batch_y             = BatchVector(MT, VT, m, batch_size)
-    batch_c             = BatchVector(MT, VT, m, batch_size)
-    batch_rhs           = BatchVector(MT, VT, m, batch_size)
+    correction_lb = BatchVector(MT, VT, nlb, batch_size)
+    jacl          = BatchVector(MT, VT, n,   batch_size)
+    y             = BatchVector(MT, VT, m,   batch_size)
+    c             = BatchVector(MT, VT, m,   batch_size)
+    rhs           = BatchVector(MT, VT, m,   batch_size)
 
     workspace = UniformBatchWorkspace(MT, VT, n, m, nlb, nub, batch_size;
-                               nvar_nlp=nvar_nlp)
-
-    batch_del_w = fill!(MT(undef, 1, batch_size), zero(T))
-    batch_del_c = fill!(MT(undef, 1, batch_size), zero(T))
+                                       nvar_nlp = nvar_nlp)
+    del_w = fill!(MT(undef, 1, batch_size), zero(T))
+    del_c = fill!(MT(undef, 1, batch_size), zero(T))
 
     problem = BatchMPCProblem(
-        bnlp, bcb, batch_kkts,
-        ipm_opt, regularization, step_rule, barrier_update,
+        nothing, bnlp, nothing, bcb, batch_kkts, ipm_opt,
+        regularization, step_rule, barrier_update,
         logger, batch_views, batch_size,
     )
     state = BatchMPCState(
-        cnt,
-        batch_x, batch_xl, batch_xu, batch_zl, batch_zu, batch_f,
-        batch_y, batch_c, batch_jacl, batch_rhs,
-        batch_correction_lb,
-        batch_d, batch_p, batch_w1,
-        workspace,
-        batch_del_w, batch_del_c,
+        cnt, x, xl, xu, zl, zu, f,
+        y, c, jacl, rhs, correction_lb,
+        d, p, w1, workspace, del_w, del_c,
     )
     return UniformBatchMPCSolver{T, MT, VT, typeof(problem), typeof(state)}(problem, state)
+end
+
+"""
+    UniformBatchMPCSolver(bnlp::ObjRHSBatchQuadraticModel; kwargs...)
+
+Construct a batch solver from an original-space batch LP/QP. Standardizes
+each instance via [`standard_form`](@ref), builds the std-form solver, and
+keeps the original model + workspace on the problem so `solve!` recovers
+solutions/multipliers in the original space.
+"""
+function UniformBatchMPCSolver(bnlp::BatchQuadraticModel; kwargs...)
+    std_bnlp, ws_batch = standard_form(bnlp)
+    # Delegate to the generic ctor; `invoke` avoids re-dispatching to this
+    # method. `standard_form` guarantees the std batch already satisfies the
+    # standard-form invariants, so skip the (GPU-unfriendly) re-check.
+    solver = invoke(UniformBatchMPCSolver,
+                    Tuple{NLPModels.AbstractBatchNLPModel{eltype(std_bnlp.c_batch),typeof(std_bnlp.c_batch)}},
+                    std_bnlp; check_standard_form = false, kwargs...)
+    solver.problem.original_nlp = bnlp
+    solver.problem.workspace = ws_batch
+    return solver
+end
+
+"""
+    update!(solver::UniformBatchMPCSolver; c_batch, c0_batch, A, Q, lvar_batch, uvar_batch, lcon_batch, ucon_batch, x0_batch, y0_batch)
+
+Mutate the original batch model held by `solver` and propagate to the
+std-form batch model. Sparsity patterns and bound kinds must be unchanged;
+construct a new solver for structural changes.
+"""
+function update!(solver::UniformBatchMPCSolver; kwargs...)
+    problem = solver.problem
+    problem.original_nlp === nothing && error(
+        "update! requires a solver built from an original-space batch model " *
+        "(e.g. ObjRHSBatchQuadraticModel); this solver was constructed from " *
+        "an already-standardized batch NLP.")
+    update_standard_form!(problem.original_nlp, problem.nlp, problem.workspace; kwargs...)
+    return solver
 end

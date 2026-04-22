@@ -1,3 +1,12 @@
+"""
+    BatchUnreducedKKTVector{T, MT, VI, SV, IV}
+
+Batched analogue of `MadNLP.UnreducedKKTVector` — a `(total, nbatch)` block
+carrying the four KKT-vector slices (primal / dual / dual-lb / dual-ub)
+laid out contiguously per-column. `MadNLP.primal/dual/dual_lb/dual_ub` return
+the matching sub-view so shared code in MadNLP reads them transparently.
+`_xp_lr` / `_xp_ur` are the lower- / upper-bound slices of the primal block.
+"""
 struct BatchUnreducedKKTVector{T, MT<:AbstractMatrix{T}, VI, SV, IV}
     values::MT
     n::Int
@@ -49,6 +58,13 @@ MadNLP.dual_ub(bv::BatchUnreducedKKTVector) = bv._dual_ub
 xp_lr(bv::BatchUnreducedKKTVector) = bv._xp_lr
 xp_ur(bv::BatchUnreducedKKTVector) = bv._xp_ur
 
+"""
+    BatchPrimalVector{T, MT, VI, SV, IV}
+
+Batched analogue of `MadNLP.PrimalVector` — `(nx + ns, nbatch)` matrix
+holding the variable + slack blocks together. `variable` / `slack` /
+`lower` / `upper` expose the matching sub-views for MadNLP's shared code.
+"""
 struct BatchPrimalVector{T, MT<:AbstractMatrix{T}, VI, SV, IV}
     values::MT
     nx::Int
