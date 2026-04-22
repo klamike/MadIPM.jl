@@ -1,9 +1,8 @@
-# Step-rule kernels (fraction-to-boundary + Mehrotra adaptive).
-# Stays specialized: scalar uses scalar-state mapreduce; batch uses
-# per-column kernels writing into matrix scratch.
+# ---------- scalar step rules ----------
 
-# ---------- scalar ----------
-
+# Largest `α ∈ (0, 1]` keeping `v + α dv ≥ 0`, scaled by the fraction-to-
+# boundary factor `τ`. Returns `(α, idx)`; `idx` is the blocking-component
+# index used by `MehrotraAdaptiveStep` for its per-coordinate correction.
 function get_alpha_max(v::AbstractVector{T}, dv, tau::T) where {T}
     return mapreduce(
         (dvi, vi, i) -> ((dvi < 0 ? (-vi) * tau / dvi : Inf), i),
@@ -57,22 +56,27 @@ function update_step!(rule::MehrotraAdaptiveStep, solver::MPCSolver)
     return
 end
 
-# ---------- batch ----------
 
-function set_tau!(rule::ConservativeStep, batch_solver::AbstractBatchMPCSolver)
+
+# ---------- batch step rules ----------
+
+# Per-instance `τ` — one value per batch column.
+function set_tau!(rule::ConservativeStep, batch_solver::UniformBatchMPCSolver)
     fill!(batch_solver.state.workspace.tau, rule.tau)
 end
-function set_tau!(rule::AdaptiveStep, batch_solver::AbstractBatchMPCSolver)
+function set_tau!(rule::AdaptiveStep, batch_solver::UniformBatchMPCSolver)
     ws = batch_solver.state.workspace
     ws.tau .= max.(1 .- ws.mu_batch, rule.tau_min)
 end
-function update_step!(rule::Union{ConservativeStep, AdaptiveStep}, batch_solver::AbstractBatchMPCSolver)
+function update_step!(rule::Union{ConservativeStep, AdaptiveStep}, batch_solver::UniformBatchMPCSolver)
     set_tau!(rule, batch_solver)
     get_fraction_to_boundary_step!(batch_solver)
     return
 end
 
-function get_fraction_to_boundary_step!(batch_solver::AbstractBatchMPCSolver)
+# Compute per-instance `α_p`, `α_d` from the four side-specific scans
+# (primal lb/ub, dual lb/ub). Sides with no bounds short-circuit to `α = 1`.
+function get_fraction_to_boundary_step!(batch_solver::UniformBatchMPCSolver)
     state = batch_solver.state
     ws = state.workspace
     x, xl, xu = state.x, state.xl, state.xu
@@ -100,6 +104,13 @@ function get_fraction_to_boundary_step!(batch_solver::AbstractBatchMPCSolver)
     ws.alpha_d .= min.(ws.alpha_zl, ws.alpha_zu, one(T))
     return
 end
+
+# CPU fraction-to-boundary kernels. Each one scans one side of the bound
+# constraints per batch column: `primal_lb` / `primal_ub` walk the primal
+# iterate against its lower/upper bound; `dual_lb` / `dual_ub` enforce
+# non-negativity of `z` (+ a tie-breaker in the upper case to avoid
+# taking a step that crosses `z + d = 0`). GPU ext overrides with one
+# KA kernel per variant so the SubArray views dispatch correctly.
 
 function _ftb_primal_lb!(alpha_out, dx, x, xb, tau)
     T = eltype(alpha_out)
@@ -161,6 +172,10 @@ function _ftb_dual_ub!(alpha_out, dz, z, tau)
     end
 end
 
+# Mehrotra's aggressive step rule (batch). For each column, find the
+# blocking index on each side, then correct the nominal max step using the
+# `μ` target so that the post-step complementarity lands close to `μ`
+# instead of at zero (which would be a slower barrier step).
 function _mehrotra_step!(
     alpha_p, alpha_d, mu, gamma_f,
     dx_lr, x_lr, xl_r, nlb, dzlb, zl_r,
@@ -247,7 +262,7 @@ end
     return
 end
 
-function update_step!(rule::MehrotraAdaptiveStep, batch_solver::AbstractBatchMPCSolver)
+function update_step!(rule::MehrotraAdaptiveStep, batch_solver::UniformBatchMPCSolver)
     state = batch_solver.state
     ws = state.workspace
     x, xl, xu = state.x, state.xl, state.xu
@@ -277,7 +292,6 @@ function update_step!(rule::MehrotraAdaptiveStep, batch_solver::AbstractBatchMPC
     return
 end
 
-# FIXME: make it a kernel
 function _adjust_boundary_active!(x_lr::AbstractMatrix{T}, xl_r, x_ur, xu_r, mu, mask) where {T}
     c2 = eps(T)^(T(3)/T(4))
     c1 = eps(T)

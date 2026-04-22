@@ -1,32 +1,39 @@
-# Unified diagonal-block accessors so the same broadcasted writes work for
-# scalar (`AbstractKKTSystem` exposes `pr_diag` / `du_diag` as fields) and
-# batch (`AbstractBatchKKTSystem` packs them as views into `nzVals` —
-# already provided as `pr_diag(::AbstractBatchKKTSystem)` /
-# `du_diag(::AbstractBatchKKTSystem)`).
+# Augmented-system diagonal assembly: sets `kkt.reg`, `du_diag`, `l_diag`,
+# `u_diag`, `l_lower`, `u_lower`, `pr_diag` from the current iterate.
+# The masked path (`_set_aug_diagonal_reg_masked!`) is taken only when the
+# batch active-set view is narrower than the root batch — it preserves the
+# diagonal values for inactive (converged) instances so their last
+# factorization stays valid.
+
+# ---------- KKT index accessors ----------
+# Thin wrappers so `_pr_diag_*_view` and `_set_*` functions can pull the
+# matching index vectors from both scalar `AbstractKKTSystem` and batch
+# `AbstractBatchKKTSystem` uniformly.
 
 @inline pr_diag(kkt::MadNLP.AbstractKKTSystem) = kkt.pr_diag
 @inline du_diag(kkt::MadNLP.AbstractKKTSystem) = kkt.du_diag
-
-# ---------- unified (scalar SparseKKT + batch unmasked) ----------
-
-# Scalar's KKT exposes `kkt.ind_lb` / `kkt.ind_ub` directly; batch keeps
-# the indices on the callback and exposes them through the solver.
 @inline _kkt_ind_lb(kkt::MadNLP.AbstractKKTSystem, ::MPCSolver)         = kkt.ind_lb
 @inline _kkt_ind_ub(kkt::MadNLP.AbstractKKTSystem, ::MPCSolver)         = kkt.ind_ub
-@inline _kkt_ind_lb(::AbstractBatchKKTSystem, s::AbstractBatchMPCSolver) = _get_ind_lb(s)
-@inline _kkt_ind_ub(::AbstractBatchKKTSystem, s::AbstractBatchMPCSolver) = _get_ind_ub(s)
-
-# `view(pr_diag(kkt), idx)` for scalar (1D) vs `view(pr_diag(kkt), idx, :)`
-# for batch (2D matrix), so the mutating broadcast picks up the right shape.
+@inline _kkt_ind_lb(::AbstractBatchKKTSystem, s::UniformBatchMPCSolver) = _get_ind_lb(s)
+@inline _kkt_ind_ub(::AbstractBatchKKTSystem, s::UniformBatchMPCSolver) = _get_ind_ub(s)
 @inline _pr_diag_lb_view(kkt::MadNLP.AbstractKKTSystem, s::MPCSolver)              = view(pr_diag(kkt), _kkt_ind_lb(kkt, s))
 @inline _pr_diag_ub_view(kkt::MadNLP.AbstractKKTSystem, s::MPCSolver)              = view(pr_diag(kkt), _kkt_ind_ub(kkt, s))
-@inline _pr_diag_lb_view(kkt::AbstractBatchKKTSystem, s::AbstractBatchMPCSolver)   = view(pr_diag(kkt), _kkt_ind_lb(kkt, s), :)
-@inline _pr_diag_ub_view(kkt::AbstractBatchKKTSystem, s::AbstractBatchMPCSolver)   = view(pr_diag(kkt), _kkt_ind_ub(kkt, s), :)
+@inline _pr_diag_lb_view(kkt::AbstractBatchKKTSystem, s::UniformBatchMPCSolver)   = view(pr_diag(kkt), _kkt_ind_lb(kkt, s), :)
+@inline _pr_diag_ub_view(kkt::AbstractBatchKKTSystem, s::UniformBatchMPCSolver)   = view(pr_diag(kkt), _kkt_ind_ub(kkt, s), :)
+# `SparseUniformBatchKKTSystem.pr_diag` is itself a `view(nzVals, 1:n_tot, :)` —
+# nesting a CuArray-indexed view through a UnitRange-indexed parent triggers
+# scalar getindex on the UnitRange. View the underlying nzVals directly.
+@inline _pr_diag_lb_view(kkt::SparseUniformBatchKKTSystem, s::UniformBatchMPCSolver) = view(kkt.nzVals, _kkt_ind_lb(kkt, s), :)
+@inline _pr_diag_ub_view(kkt::SparseUniformBatchKKTSystem, s::UniformBatchMPCSolver) = view(kkt.nzVals, _kkt_ind_ub(kkt, s), :)
+
+# ---------- entry points ----------
+# Scalar: always the full-rewrite path. Batch: masked path kicks in once the
+# active-set view shrinks from the root batch.
 
 function set_aug_diagonal_reg!(kkt::MadNLP.AbstractKKTSystem{T}, s::MPCSolver{T}) where {T}
     _set_aug_diagonal_reg_unmasked!(kkt, s)
 end
-function set_aug_diagonal_reg!(kkt::AbstractBatchKKTSystem, s::AbstractBatchMPCSolver)
+function set_aug_diagonal_reg!(kkt::AbstractBatchKKTSystem, s::UniformBatchMPCSolver)
     if is_identity_view(active_view(s.problem.batch_views))
         _set_aug_diagonal_reg_unmasked!(kkt, s)
     else
@@ -34,19 +41,12 @@ function set_aug_diagonal_reg!(kkt::AbstractBatchKKTSystem, s::AbstractBatchMPCS
     end
 end
 
-# Same math, different storage convention:
-#   * basic scalar / batch KKT store `l_diag = xl - x` (≤ 0) and
-#     `u_diag = x - xu` (≤ 0); the lb / ub pr_diag updates flow through
-#     `_finalize_aug_diagonal!`.
-#   * `MadNLP.ScaledSparseKKTSystem` expects the positive convention
-#     `l_diag = x - xl`, `u_diag = xu - x`, and its `_set_aug_diagonal!`
-#     handles the (different) pr_diag layout with the scaling factor.
 @inline _aug_l_diag_sign(kkt) = -one(eltype(kkt.reg))
 @inline _aug_u_diag_sign(kkt) = -one(eltype(kkt.reg))
 @inline _aug_l_diag_sign(kkt::MadNLP.ScaledSparseKKTSystem) = one(eltype(kkt.reg))
 @inline _aug_u_diag_sign(kkt::MadNLP.ScaledSparseKKTSystem) = one(eltype(kkt.reg))
 
-function _set_aug_diagonal_reg_unmasked!(kkt, s::AnyMPCSolver)
+function _set_aug_diagonal_reg_unmasked!(kkt, s::MaybeBatchMPCSolver)
     kkt.reg .= _del_w(s)
     du_diag(kkt) .= _del_c(s)
     sl = _aug_l_diag_sign(kkt)
@@ -59,31 +59,19 @@ function _set_aug_diagonal_reg_unmasked!(kkt, s::AnyMPCSolver)
     return
 end
 
-@inline function _finalize_aug_diagonal!(kkt, s::AnyMPCSolver)
+@inline function _finalize_aug_diagonal!(kkt, s::MaybeBatchMPCSolver)
     pr_diag(kkt) .= kkt.reg
     _pr_diag_lb_view(kkt, s) .-= kkt.l_lower ./ kkt.l_diag
     _pr_diag_ub_view(kkt, s) .-= kkt.u_lower ./ kkt.u_diag
     return
 end
 
-@inline function _finalize_aug_diagonal!(kkt::MadNLP.ScaledSparseKKTSystem, ::AnyMPCSolver)
-    # Delegates to MadNLP's scaled implementation: it lays out `pr_diag`
-    # itself (computing scaling_factor and the scaled regularization).
+@inline function _finalize_aug_diagonal!(kkt::MadNLP.ScaledSparseKKTSystem, ::MaybeBatchMPCSolver)
     MadNLP._set_aug_diagonal!(kkt)
     return
 end
 
-# ---------- batch (masked active-set variant) ----------
-#
-# Mirrors the unmasked body but gates each write behind the active mask so
-# converged instances retain their previous diagonal values. Today only the
-# basic batch KKT systems exist, but the sign / pr_diag-finalize work goes
-# through the same hooks as the unmasked path so a future
-# `ScaledSparseUniformBatchKKTSystem` would be supported by adding the
-# matching `_aug_*_diag_sign` / `_finalize_aug_diagonal_masked!` overrides
-# without forking this body.
-
-function _set_aug_diagonal_reg_masked!(kkt, solver::AbstractBatchMPCSolver)
+function _set_aug_diagonal_reg_masked!(kkt, solver::UniformBatchMPCSolver)
     state = solver.state
     sl = _aug_l_diag_sign(kkt)
     su = _aug_u_diag_sign(kkt)
@@ -101,7 +89,7 @@ function _set_aug_diagonal_reg_masked!(kkt, solver::AbstractBatchMPCSolver)
     return
 end
 
-@inline function _finalize_aug_diagonal_masked!(kkt, s::AbstractBatchMPCSolver)
+@inline function _finalize_aug_diagonal_masked!(kkt, s::UniformBatchMPCSolver)
     mask = s.state.workspace.active_mask
     _pr = pr_diag(kkt)
     @. _pr = ifelse(mask == 1, kkt.reg, _pr)
@@ -111,4 +99,3 @@ end
     @. pr_diag_ub = ifelse(mask == 1, pr_diag_ub - kkt.u_lower / kkt.u_diag, pr_diag_ub)
     return
 end
-

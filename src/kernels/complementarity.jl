@@ -1,4 +1,7 @@
-# ---------- scalar ----------
+# ---------- complementarity / barrier update (scalar) ----------
+# `μ = ⟨x_L, z_L⟩ / nlb` is the IPM's central-path parameter. The solver
+# tracks both the current iterate's `μ_curr` and the predictor-step's
+# `μ_affine`; Mehrotra shrinks toward `(μ_affine / μ_curr)^3 * μ_curr`.
 
 function _xz_sum(solver::MPCSolver)
     x = solver.state.x_lr
@@ -34,9 +37,13 @@ function get_affine_complementarity_measure(solver::MPCSolver, alpha_p, alpha_d)
     ) / length(state.x_lr)
 end
 
-# ---------- batch ----------
 
-function get_complementarity_measure!(solver::AbstractBatchMPCSolver)
+
+# ---------- complementarity / barrier update (batch) ----------
+# Mirrors the scalar path but stores per-instance `mu_curr`, `mu_affine`,
+# `mu_batch` as `(1, nbatch)` matrices so the broadcasts stay on-backend.
+
+function get_complementarity_measure!(solver::UniformBatchMPCSolver)
     state = solver.state
     ws = state.workspace
     nlb, nub = state.d.nlb, state.d.nub
@@ -60,7 +67,7 @@ function get_complementarity_measure!(solver::AbstractBatchMPCSolver)
     return ws.mu_curr
 end
 
-function get_affine_complementarity_measure!(solver::AbstractBatchMPCSolver, alpha_p, alpha_d)
+function get_affine_complementarity_measure!(solver::UniformBatchMPCSolver, alpha_p, alpha_d)
     state = solver.state
     ws = state.workspace
     nlb, nub = state.d.nlb, state.d.nub
@@ -88,6 +95,9 @@ function get_affine_complementarity_measure!(solver::AbstractBatchMPCSolver, alp
     return ws.mu_affine
 end
 
+# CPU affine-step complementarity scans (batched). `lb` case uses the
+# `(x - xl)` primal slack; `ub` case uses `(xu - x)`. GPU ext overrides
+# both with KA kernels since SubArray-of-CuMatrix can't be scalar-indexed.
 function _affine_compl_lb!(out, x, xl, z, dx, dz, αp, αd)
     T = eltype(out)
     n, bs = size(x)
@@ -114,7 +124,7 @@ function _affine_compl_ub!(out, xu, x, z, dx, dz, αp, αd)
     end
 end
 
-function update_barrier!(::Mehrotra, solver::AbstractBatchMPCSolver, mu_affine)
+function update_barrier!(::Mehrotra, solver::UniformBatchMPCSolver, mu_affine)
     state = solver.state
     ws = state.workspace
     T = eltype(ws.mu_curr)
