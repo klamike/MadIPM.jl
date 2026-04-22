@@ -112,6 +112,54 @@ end
     @test_throws ArgumentError madipm_batch(bqp; print_level = MadNLP.ERROR)
 end
 
+@testset "Batch QP via BatchQuadraticModel (per-instance A and Q)" begin
+    # Single constraint x1 + s_j*x2 = 1 with x_i >= 0, minimize x1 + x2.
+    # Per-instance A coefficient on x2 (s_j) makes A vary across the batch.
+    function make_qp(seed)
+        A = sparse([1, 1], [1, 2], Float64[1.0, 1.0 + 0.25*seed])
+        Q = sparse(Int[], Int[], Float64[], 2, 2)
+        BQM.QuadraticModel(BQM.QPData(A, [1.0, 1.0], Q;
+            lcon = [1.0], ucon = [1.0],
+            lvar = [0.0, 0.0], uvar = [Inf, Inf], c0 = 0.0))
+    end
+    qps  = [make_qp(s) for s in 1:3]
+    bnlp = BQM.BatchQuadraticModel(qps)
+    stats = madipm_batch(bnlp; print_level = MadNLP.ERROR)
+    for j in 1:3
+        @test stats.status[j] == MadNLP.SOLVE_SUCCEEDED
+        ref = madipm(qps[j]; print_level = MadNLP.ERROR)
+        @test stats.objective[j]            ≈ ref.objective atol = 1e-5
+        @test Vector(stats.solution[:, j])  ≈ ref.solution  atol = 1e-5
+    end
+end
+
+@testset "Batch update! on UniformBatchMPCSolver" begin
+    # Build solver once, mutate c via update!, re-solve, compare to a fresh solver.
+    A = sparse([1.0 1.0])
+    nbatch = 2
+    bqp = _build_lp_batch(
+        [1.0  1.0; 1.0  1.0],
+        [1.0  1.0], [1.0  1.0],
+        [0.0  0.0; 0.0  0.0],
+        [1.0  1.0; 1.0  1.0]; A = A,
+    )
+    solver = MadIPM.UniformBatchMPCSolver(bqp; print_level = MadNLP.ERROR)
+    new_c = [2.0  -1.0; 3.0   2.0]
+    MadIPM.update!(solver; c = new_c)
+    stats = MadIPM.solve!(solver)
+    @test all(stats.status .== MadNLP.SOLVE_SUCCEEDED)
+
+    # Reference: fresh solver with the new c.
+    bqp_ref = _build_lp_batch(
+        new_c, [1.0  1.0], [1.0  1.0],
+        [0.0  0.0; 0.0  0.0], [1.0  1.0; 1.0  1.0]; A = A,
+    )
+    ref = madipm_batch(bqp_ref; print_level = MadNLP.ERROR)
+    for j in 1:nbatch
+        @test stats.objective[j] ≈ ref.objective[j] atol = 1e-5
+    end
+end
+
 @testset "Batch LP recovers primal in original variable space" begin
     # min x1 + x2 s.t. x1 + x2 = 1, lvar = [0.2, 0.3], uvar = [0.8, 0.7].
     # Optimal at x = (0.2, 0.8) → 1.0 (LB binding for x1) — actually for these
