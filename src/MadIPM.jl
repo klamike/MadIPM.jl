@@ -59,12 +59,6 @@ include("batch/madnlp/linear_solver.jl")
 include("batch/madnlp/kernels.jl")
 include("batch/madnlp/nlpmodels.jl")
 include("batch/KKT/Sparse/normal.jl")
-# ScaledSparseUniformBatchKKTSystem: CPU-verified (afiro 7 iters 8/8).
-# GPU path currently diverges from CPU: with `scaling_factor`, `aug_com_nzvals`,
-# and every state buffer matching CPU to ~1e-7, the direction `d` after one
-# `mpc_step!` differs by ~4. Suspected CUDSS ubatch numerical/semantic quirk.
-# Keeping the include so `kkt_system = ScaledSparseKKTSystem` routes to the
-# batch type; use on GPU with caution until the divergence is tracked down.
 include("batch/KKT/Sparse/scaled_augmented.jl")
 
 include("solver/linear_solver.jl")
