@@ -17,6 +17,7 @@ mutable struct MPCProblem{
     REG <: AbstractRegularization,
     STEP <: AbstractStepRule,
     BARR <: AbstractBarrierUpdate,
+    SCL <: AbstractScaler,
 }
     original_nlp::OrigModel
     nlp::StdModel
@@ -27,6 +28,7 @@ mutable struct MPCProblem{
     regularization::REG
     step_rule::STEP
     barrier_update::BARR
+    scaler::SCL
     logger::MadNLP.MadNLPLogger
     nlb::Int
 end
@@ -149,6 +151,12 @@ function MPCSolver(nlp::Union{LinearModel, QuadraticModel}; kwargs...)
     ipm_opt            = options.interior_point
     cnt                = MadNLP.MadNLPCounters(start_time = time())
 
+    # Ruiz equilibration (optional; `NoScaling` short-circuits). Done BEFORE
+    # the callback/KKT are built from `std_nlp`, so MadNLP sees the scaled
+    # data from the first factorization onward.
+    scaler = make_scaler(options.scaling, std_nlp)
+    refresh_scaling!(scaler, std_nlp)
+
     cb = MadNLP.create_callback(
         MadNLP.SparseCallback, std_nlp;
         fixed_variable_treatment = ipm_opt.fixed_variable_treatment,
@@ -183,7 +191,7 @@ function MPCSolver(nlp::Union{LinearModel, QuadraticModel}; kwargs...)
     problem = MPCProblem(
         nlp, std_nlp, workspace, cb, kkt, ipm_opt,
         options.regularization, options.step_rule, options.barrier_update,
-        options.logger, nlb,
+        scaler, options.logger, nlb,
     )
     z = zero(T)
     state = MPCState(
@@ -216,5 +224,9 @@ unchanged; for structural changes construct a new `MPCSolver`.
 function update!(solver::MPCSolver; kwargs...)
     problem = solver.problem
     update_standard_form!(problem.original_nlp, problem.nlp, problem.workspace; kwargs...)
+    # `refresh_scaling!` re-runs Ruiz only when A / Q structurally changed
+    # (signature mismatch); otherwise it reapplies the cached scales to the
+    # freshly-updated c / b / bounds / x0.
+    refresh_scaling!(problem.scaler, problem.nlp)
     return solver
 end

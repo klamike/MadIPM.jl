@@ -42,6 +42,7 @@ import BatchQuadraticModels: LPData, LinearModel, QPData, QuadraticModel,
     BatchSparseOperator, batch_spmv!, batch_mapreduce!, batch_maximum!,
     _copy_sparse_structure!, _copy_sparse_values!, sparse_operator, operator_sparse_matrix
 
+include("scaling.jl")
 include("utils.jl")
 include("KKT/normalkkt.jl")
 include("structure.jl")
@@ -58,6 +59,13 @@ include("batch/madnlp/linear_solver.jl")
 include("batch/madnlp/kernels.jl")
 include("batch/madnlp/nlpmodels.jl")
 include("batch/KKT/Sparse/normal.jl")
+# ScaledSparseUniformBatchKKTSystem: CPU-verified (afiro 7 iters 8/8).
+# GPU path currently diverges from CPU: with `scaling_factor`, `aug_com_nzvals`,
+# and every state buffer matching CPU to ~1e-7, the direction `d` after one
+# `mpc_step!` differs by ~4. Suspected CUDSS ubatch numerical/semantic quirk.
+# Keeping the include so `kkt_system = ScaledSparseKKTSystem` routes to the
+# batch type; use on GPU with caution until the divergence is tracked down.
+include("batch/KKT/Sparse/scaled_augmented.jl")
 
 include("solver/linear_solver.jl")
 
@@ -74,7 +82,8 @@ include("solver/loop.jl")
 include("solver/stats.jl")
 include("solver/entry.jl")
 
-export LPData, LinearModel, MPCSolver, QPData, QuadraticModel, madipm, madipm_batch, standard_form, update!
+export LPData, LinearModel, MPCSolver, QPData, QuadraticModel, madipm, madipm_batch, standard_form, update!,
+    NoScaling, RuizScaling
 
 MadNLP.madsuite(::Val{:madipm}, args...; kwargs...) = madipm(args...; kwargs...)
 

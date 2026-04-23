@@ -16,12 +16,13 @@ SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [weakdeps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
 MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 
 [extensions]
-MadIPMCUDAExt = ["CUDA", "KernelAbstractions", "MadNLPGPU"]
+MadIPMCUDAExt = ["CUDA", "CUDSS", "KernelAbstractions", "MadNLPGPU"]
 MadIPMMathOptInterfaceExt = "MathOptInterface"
 
 [sources]

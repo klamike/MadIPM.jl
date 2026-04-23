@@ -30,5 +30,7 @@ import MadNLP
 import NLPModels
 
 include("cuda_wrapper.jl")
+include("cudss_batch.jl")
+include("ruiz.jl")
 
 end # module

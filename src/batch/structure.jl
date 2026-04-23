@@ -90,7 +90,7 @@ constructed directly from a standard-form batch NLP; otherwise they hold the
 original batch model and the BQM presolve workspace used to recover
 solutions in the original variable space.
 """
-mutable struct BatchMPCProblem{BM, BCB, BVS, KKT<:AbstractBatchKKTSystem, REG<:AbstractRegularization, STEP<:AbstractStepRule, BARR<:AbstractBarrierUpdate}
+mutable struct BatchMPCProblem{BM, BCB, BVS, KKT<:AbstractBatchKKTSystem, REG<:AbstractRegularization, STEP<:AbstractStepRule, BARR<:AbstractBarrierUpdate, SCL<:AbstractScaler}
     original_nlp::Any           # original-space batch model (nothing when input is already std-form)
     nlp::BM                     # std-form batch model actually solved
     workspace::Any              # StandardFormBatchWorkspace, or nothing
@@ -100,6 +100,7 @@ mutable struct BatchMPCProblem{BM, BCB, BVS, KKT<:AbstractBatchKKTSystem, REG<:A
     regularization::REG
     step_rule::STEP
     barrier_update::BARR
+    scaler::SCL
     logger::MadNLP.MadNLPLogger
     batch_views::BVS
     batch_size::Int
@@ -279,6 +280,12 @@ function UniformBatchMPCSolver(
     # on GPU is respected (otherwise opt_batch_ls keeps its CPU default).
     opt_batch_ls.looped_linear_solver = ipm_opt.linear_solver
 
+    # Ruiz equilibration of the std-form batch: std form is already built, so
+    # we can scale `A`, `Q`, `c_batch`, `lcon/ucon`, `x0` in-place before
+    # constructing the callback/KKT (which cache a scaled view of A).
+    scaler = make_scaler(options.scaling, bnlp)
+    refresh_scaling!(scaler, bnlp)
+
     cnt = BatchCounters(batch_size)
     bcb = MadNLP.create_callback(
         UniformBatchCallback{T, VT, MT, VI}, bnlp;
@@ -317,7 +324,7 @@ function UniformBatchMPCSolver(
 
     problem = BatchMPCProblem(
         nothing, bnlp, nothing, bcb, batch_kkts, ipm_opt,
-        regularization, step_rule, barrier_update,
+        regularization, step_rule, barrier_update, scaler,
         logger, batch_views, batch_size,
     )
     state = BatchMPCState(
@@ -363,5 +370,6 @@ function update!(solver::UniformBatchMPCSolver; kwargs...)
         "(e.g. ObjRHSBatchQuadraticModel); this solver was constructed from " *
         "an already-standardized batch NLP.")
     update_standard_form!(problem.original_nlp, problem.nlp, problem.workspace; kwargs...)
+    refresh_scaling!(problem.scaler, problem.nlp)
     return solver
 end

@@ -29,6 +29,11 @@ function update_solution!(stats::MadNLP.MadNLPExecutionStats, solver::MPCSolver)
     problem, state = solver.problem, solver.state
     ws             = problem.workspace
 
+    # Unscale the scaled-std iterate into std space before BQM maps std → orig.
+    # `NullScaler` is a no-op.
+    unscale_iterate!(problem.scaler, MadNLP.variable(state.x), state.y,
+                     MadNLP.variable(state.zl))
+
     stats.status = state.status
     recover_primal!(stats.solution, ws, MadNLP.variable(state.x))
     BatchQuadraticModels._gather_dual!(stats.multipliers, ws.con_start.row, state.y)
@@ -58,6 +63,12 @@ function update_solution!(stats::BatchExecutionStats,
     stats.dual_feas   .= vec(ws.inf_du)
     stats.primal_feas .= vec(ws.inf_pr)
     stats.total_time  .= state.cnt.total_time
+
+    # Unscale the per-column iterate (scaler may be `NullScaler`; broadcasts
+    # are row-broadcast, so the same code handles every batch column).
+    unscale_iterate!(batch_solver.problem.scaler,
+                     MadNLP.variable(state.x), MadNLP.full(state.y),
+                     MadNLP.variable(state.zl))
 
     batch_solver.problem.original_nlp === nothing ?
         _update_solution_std!(stats, batch_solver) :

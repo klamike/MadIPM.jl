@@ -151,10 +151,25 @@ end
     nothing
 end
 
+# Max shared memory per block on common CUDA arches is 48 KB; the bitmap is
+# `UInt8[n_cols]`, so kernels can't run when `n_cols` goes above that limit
+# (see the kernel's `@localmem UInt8 N`). For wide LPs (e.g. `osa-14` with
+# `n = 52460`) we'd blow past it and hit a `ptxas uses too much shared data`
+# compile error, so fall back to the generic CPU `build_normal_system` (which
+# uses a single global bitmap — no smem bound) and lift the CSR arrays back
+# to the device. `n_rows` is always modest (equals `m`), so the transfer of
+# `(Jtp, Jtj)` is the only bulk cost.
+const _NORMAL_SMEM_LIMIT = 48_000
+
 function MadIPM.build_normal_system(
     n_rows, n_cols,
     Jtp::CuVector{Ti}, Jtj::CuVector{Ti},
 ) where {Ti}
+    if n_cols * sizeof(UInt8) > _NORMAL_SMEM_LIMIT
+        Cp_h, Cj_h = MadIPM.build_normal_system(n_rows, n_cols, Array(Jtp), Array(Jtj))
+        return CuArray(Cp_h), CuArray(Cj_h)
+    end
+
     backend = CUDABackend()
     Cp = CUDA.ones(Ti, n_rows + 1)
     _count_normal_nnz!(backend)(Cp, Jtp, Jtj, n_rows, Val(n_cols); ndrange = n_rows)

@@ -151,13 +151,22 @@ function load_options(
     regularization::AbstractRegularization = FixedRegularization(1e-10, 1e-10),
     step_rule::AbstractStepRule = AdaptiveStep(0.99),
     barrier_update::AbstractBarrierUpdate = Mehrotra(),
+    scaling::AbstractScaling = RuizScaling(),
     cudss_algorithm = nothing,
+    cudss_ir = nothing,
     kwargs...,
 )
     opt_ipm = IPMOptions(nlp; kwargs...)
     opt_linear_solver = MadNLP.default_options(opt_ipm.linear_solver)
     if !isnothing(cudss_algorithm)
         opt_linear_solver.cudss_algorithm = cudss_algorithm
+    end
+    # CUDSS-LDL on the unreduced augmented system is fragile without iterative
+    # refinement (e.g. Netlib `forplan`); Ruiz scaling helps but doesn't make
+    # the factor itself more accurate. Default to a modest IR budget when the
+    # linear solver is CUDSS — cheap and broadly stabilizing.
+    if hasfield(typeof(opt_linear_solver), :cudss_ir)
+        opt_linear_solver.cudss_ir = isnothing(cudss_ir) ? 5 : cudss_ir
     end
 
     logger = MadNLP.MadNLPLogger(
@@ -174,6 +183,7 @@ function load_options(
         regularization = regularization,
         step_rule = step_rule,
         barrier_update = barrier_update,
+        scaling = scaling,
     )
 end
 
