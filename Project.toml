@@ -26,7 +26,7 @@ MadIPMCUDAExt = ["CUDA", "CUDSS", "KernelAbstractions", "MadNLPGPU"]
 MadIPMMathOptInterfaceExt = "MathOptInterface"
 
 [sources]
-BatchQuadraticModels = {path = "../BatchQuadraticModels.jl"}
+BatchQuadraticModels = {rev = "8bbe90f8f025574917e1f3535a0ee9f9a9116c02", url = "https://github.com/klamike/BatchQuadraticModels.jl.git"}
 
 [compat]
 Adapt = "4"
