@@ -1,0 +1,22 @@
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+BQMSolvers = "a1b0d3c2-8d4b-4c5e-9f3a-b7e2f9a40002"
+BatchQuadraticModels = "412afcf0-3ec6-4826-be17-8d792afa05a8"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Gurobi = "2e9cd046-0924-5485-92f1-d5272153d98b"
+HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+MadIPM = "4406d55e-1099-4ca6-ac6a-6cf051b10024"
+MadNLP = "2621e9c9-9eb4-46b1-8089-e8c72242dfb6"
+MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
+MathOptBenchmarkInstances = "f7f8d0a1-fd34-491e-a7ac-a4cf52f91fe5"
+NLPModels = "a4795742-8479-5a88-8948-cc11e1c8c1a6"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+QPSReader = "10f199a5-22af-520b-b891-7ce84a7b1bd0"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+
+[sources]
+BQMSolvers = {path = "../../BQMSolvers.jl"}
+BatchQuadraticModels = {path = "../../BatchQuadraticModels.jl"}
+MadIPM = {path = ".."}
