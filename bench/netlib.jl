@@ -18,6 +18,7 @@ using NLPModels
 using BatchQuadraticModels
 using MadIPM
 using MadNLP
+using MathOptInterface
 using MathOptBenchmarkInstances
 using QPSReader: QPSData
 
@@ -31,6 +32,11 @@ using MadNLPGPU
 using BQMSolvers
 using Gurobi
 using HiGHS
+
+const MOI = MathOptInterface
+const SAF = MOI.ScalarAffineFunction{Float64}
+const SQF = MOI.ScalarQuadraticFunction{Float64}
+const VI = MOI.VariableIndex
 
 const COLLECTIONS = Dict(
     :netlib     => MathOptBenchmarkInstances.Netlib,
@@ -48,6 +54,94 @@ function load_instance(collection, name::AbstractString)
 end
 # Back-compat alias — existing helper scripts still call `load_netlib`.
 load_netlib(name::AbstractString) = load_instance(MathOptBenchmarkInstances.Netlib, name)
+
+function _miplib_mps_path(name::AbstractString)
+    mps_path = joinpath(MathOptBenchmarkInstances.MPS_SCRATCH, "miplib2017",
+                        "$(lowercase(name)).mps")
+    ispath(mps_path) && return mps_path
+    try
+        MathOptBenchmarkInstances.read_instance(MathOptBenchmarkInstances.MIPLIB2017, String(name))
+    catch
+        # `read_instance` may fail while parsing unsupported MIP sections after
+        # it has decompressed the source MPS into the scratch directory.
+    end
+    ispath(mps_path) || error("MIPLIB instance file is not available: $mps_path")
+    return mps_path
+end
+
+function _add_bound!(model, x::VI, l::Float64, u::Float64)
+    if isfinite(l) && isfinite(u)
+        l == u ? MOI.add_constraint(model, x, MOI.EqualTo(l)) :
+                 MOI.add_constraint(model, x, MOI.Interval(l, u))
+    elseif isfinite(l)
+        MOI.add_constraint(model, x, MOI.GreaterThan(l))
+    elseif isfinite(u)
+        MOI.add_constraint(model, x, MOI.LessThan(u))
+    end
+end
+
+function _copy_objective!(dest, src, index_map)
+    MOI.set(dest, MOI.ObjectiveSense(), MOI.get(src, MOI.ObjectiveSense()))
+    F = MOI.get(src, MOI.ObjectiveFunctionType())
+    if F <: VI || F <: SAF || F <: SQF
+        f = MOI.get(src, MOI.ObjectiveFunction{F}())
+        MOI.set(dest, MOI.ObjectiveFunction{F}(), MOI.Utilities.map_indices(index_map, f))
+    else
+        error("unsupported objective function type in relaxation: $F")
+    end
+end
+
+function _moi_relaxation_model(mps_path::AbstractString)
+    src = MOI.FileFormats.MPS.Model()
+    MOI.read_from_file(src, mps_path)
+
+    dest = MOI.Utilities.Model{Float64}()
+    index_map = MOI.Utilities.IndexMap()
+    for x in MOI.get(src, MOI.ListOfVariableIndices())
+        y = MOI.add_variable(dest)
+        index_map[x] = y
+    end
+    for x in MOI.get(src, MOI.ListOfVariableIndices())
+        l, u = MOI.Utilities.get_bounds(src, Float64, x)
+        _add_bound!(dest, index_map[x], l, u)
+    end
+    _copy_objective!(dest, src, index_map)
+
+    dropped = Dict{String, Int}()
+    for (F, S) in MOI.get(src, MOI.ListOfConstraintTypesPresent())
+        if F <: VI
+            continue  # variable bounds and integrality were handled above.
+        elseif F <: SAF && S <: Union{MOI.LessThan{Float64}, MOI.GreaterThan{Float64},
+                                      MOI.EqualTo{Float64}, MOI.Interval{Float64}}
+            for ci in MOI.get(src, MOI.ListOfConstraintIndices{F, S}())
+                f = MOI.get(src, MOI.ConstraintFunction(), ci)
+                s = MOI.get(src, MOI.ConstraintSet(), ci)
+                MOI.add_constraint(dest, MOI.Utilities.map_indices(index_map, f), s)
+            end
+        else
+            key = "$F-in-$S"
+            dropped[key] = get(dropped, key, 0) +
+                length(MOI.get(src, MOI.ListOfConstraintIndices{F, S}()))
+        end
+    end
+    if !isempty(dropped)
+        summary = join(("$key ($count)" for (key, count) in sort!(collect(dropped))), "; ")
+        @info "Dropped non-LP relaxation constraints from $(basename(mps_path)): $summary"
+    end
+    return dest
+end
+
+function load_qp(collection, name::AbstractString)
+    try
+        return qps_to_qp(load_instance(collection, name))
+    catch err
+        collection == MathOptBenchmarkInstances.MIPLIB2017 || rethrow()
+        mps_path = _miplib_mps_path(name)
+        model = _moi_relaxation_model(mps_path)
+        qp, _ = BatchQuadraticModels.qp_model(model)
+        return qp
+    end
+end
 
 # Build a `QuadraticModels.QuadraticModel`-compatible scalar QP from a QPSData.
 # We stick to the `BatchQuadraticModels` export path so BQM owns the format.
@@ -133,9 +227,8 @@ end
 function benchmark_instance(name::AbstractString; bs::Int = 8,
                              max_theta::Float64 = 0.1,
                              collection = MathOptBenchmarkInstances.Netlib)
-    qps = load_instance(collection, name)
-    n, m = length(qps.c), length(qps.lcon)
-    qp   = qps_to_qp(qps)
+    qp   = load_qp(collection, name)
+    n, m = qp.meta.nvar, qp.meta.ncon
     plane  = random_plane(n)
     thetas = range(-max_theta, max_theta; length = bs)
     c_mat  = rotated_costs(qp.data.c, thetas; plane)  # CPU (n, bs) matrix
@@ -289,15 +382,34 @@ end
 # Cheap size probe: read the QPSData once, report (n, m). We reuse the
 # cached file on subsequent `read_instance` calls so the full bench just
 # re-reads what's already on disk.
+function _skip_reason(err)
+    msg = sprint(showerror, err)
+    if occursin("No such file or directory", msg)
+        return "missing instance file"
+    elseif occursin("Un-recognized section header: INDICATORS", msg)
+        return "unsupported MPS section: INDICATORS"
+    elseif occursin("Un-recognized section header: LAZYCONS", msg)
+        return "unsupported MPS section: LAZYCONS"
+    else
+        return first(split(msg, '\n'))
+    end
+end
+
 function _instance_sizes(collection, names)
     sizes = Tuple{String, Int, Int}[]
+    skipped = Dict{String, Int}()
     for name in names
         try
-            qps = load_instance(collection, name)
-            push!(sizes, (name, length(qps.c), length(qps.lcon)))
+            qp = load_qp(collection, name)
+            push!(sizes, (name, qp.meta.nvar, qp.meta.ncon))
         catch err
-            @warn "skip $name" err
+            reason = _skip_reason(err)
+            skipped[reason] = get(skipped, reason, 0) + 1
         end
+    end
+    if !isempty(skipped)
+        summary = join(("$reason ($count)" for (reason, count) in sort!(collect(skipped))), "; ")
+        @info "Skipped $(sum(values(skipped))) instance(s) during size probe: $summary"
     end
     return sort!(sizes; by = t -> t[2] + t[3])
 end
@@ -309,11 +421,12 @@ function main(; bs = 8, max_theta = 0.1,
                 collection = :netlib,
                 max_size::Int = typemax(Int), limit::Int = typemax(Int))
     col       = _resolve_collection(collection)
+    println("# MadIPM × $(nameof(typeof(col))) / $(col) rotated-objective batch benchmark (bs = $bs, max_size = $max_size, threads = $(Threads.nthreads()))")
+    flush(stdout)
     all_names = MathOptBenchmarkInstances.list_instances(col)
     sorted    = _instance_sizes(col, all_names)
     filtered  = Iterators.take((t for t in sorted if (t[2] + t[3]) <= max_size), limit)
 
-    println("# MadIPM × $(nameof(typeof(col))) / $(col) rotated-objective batch benchmark (bs = $bs, max_size = $max_size, threads = $(Threads.nthreads()))")
     @printf "%-14s %6s %6s %3s %11s %11s %11s %11s %11s %14s %14s %7s %7s %7s %7s %7s %7s  %-22s %-22s %-22s %-22s %-22s %-22s %-22s\n" "name" "n" "m" "bs" "gpu_batch[s]" "gpu_scal[s]" "cpu_scal[s]" "gpu_thrd[s]" "cpu_thrd[s]" "gurobi_thrd[s]" "highs_thrd[s]" "sp_gpu" "sp_cpu" "sp_gpuT" "sp_cpuT" "sp_grbT" "sp_hgsT" "gpu_batch_status" "gpu_scal_status" "cpu_scal_status" "gpu_thrd_status" "cpu_thrd_status" "gurobi_thrd_status" "highs_thrd_status"
     for (name, n, m) in filtered
         try
@@ -328,6 +441,26 @@ function main(; bs = 8, max_theta = 0.1,
     return nothing
 end
 
+function _parse_cli(args)
+    opts = Dict{Symbol, Any}()
+    for arg in args
+        if startswith(arg, "--collection=")
+            opts[:collection] = Symbol(last(split(arg, '='; limit = 2)))
+        elseif startswith(arg, "--bs=")
+            opts[:bs] = parse(Int, last(split(arg, '='; limit = 2)))
+        elseif startswith(arg, "--max-theta=")
+            opts[:max_theta] = parse(Float64, last(split(arg, '='; limit = 2)))
+        elseif startswith(arg, "--max-size=")
+            opts[:max_size] = parse(Int, last(split(arg, '='; limit = 2)))
+        elseif startswith(arg, "--limit=")
+            opts[:limit] = parse(Int, last(split(arg, '='; limit = 2)))
+        else
+            error("unknown argument: $arg")
+        end
+    end
+    return opts
+end
+
 if abspath(PROGRAM_FILE) == @__FILE__
-    main()
+    main(; _parse_cli(ARGS)...)
 end
