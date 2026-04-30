@@ -388,3 +388,6 @@ end
 MadIPM._copy_for_scaling(A::BatchQuadraticModels.DeviceBatchSparseOperator) =
     BatchQuadraticModels.DeviceBatchSparseOperator(
         copy(A.nzvals), A.rows, A.cols, A.rowptr, A.packed, A.mean_row_nnz)
+
+MadIPM._copy_for_scaling(A::CUSPARSE.CuSparseMatrixCSR) = copy(A)
+MadIPM._copy_for_scaling(A::CUSPARSE.CuSparseMatrixCSC) = copy(A)
