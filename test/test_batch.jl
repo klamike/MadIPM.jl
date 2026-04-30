@@ -131,6 +131,11 @@ end
         @test stats.objective[j]            ≈ ref.objective atol = 1e-5
         @test Vector(stats.solution[:, j])  ≈ ref.solution  atol = 1e-5
     end
+
+    solver = MadIPM.UniformBatchMPCSolver(bnlp; print_level = MadNLP.ERROR)
+    @test solver.problem.scaler isa MadIPM.RuizScaler
+    @test size(solver.problem.scaler.row_scale) == (NLPModels.get_ncon(solver.problem.nlp), 3)
+    @test size(solver.problem.scaler.col_scale) == (NLPModels.get_nvar(solver.problem.nlp), 3)
 end
 
 @testset "Batch update! on UniformBatchMPCSolver" begin

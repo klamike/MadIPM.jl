@@ -221,6 +221,35 @@ end
     @test sol2.constraints ≈ sol_ref.constraints atol=1e-6
 end
 
+@testset "Standard-form update with non-unit scaling" begin
+    qp = BQM.QuadraticModel(
+        BQM.QPData(
+            sparse([1, 1], [1, 2], [2.0, 8.0], 1, 2),
+            [1.0, 10.0],
+            sparse(Int[], Int[], Float64[], 2, 2);
+            lcon = [8.0],
+            ucon = [8.0],
+            lvar = [0.0, 0.0],
+            uvar = [Inf, Inf],
+        ),
+    )
+    solver = MadIPM.MPCSolver(qp; print_level = MadNLP.ERROR, rethrow_error = true)
+    sol1 = MadIPM.solve!(solver)
+    @test sol1.status == MadNLP.SOLVE_SUCCEEDED
+
+    MadIPM.update!(solver; c = [10.0, 1.0])
+    sol2 = MadIPM.solve!(solver)
+    sol_ref = MadIPM.solve!(MadIPM.MPCSolver(
+        solver.problem.original_nlp;
+        print_level = MadNLP.ERROR,
+        rethrow_error = true,
+    ))
+
+    @test sol2.status == MadNLP.SOLVE_SUCCEEDED
+    @test sol2.solution ≈ sol_ref.solution atol = 1e-6
+    @test sol2.objective ≈ sol_ref.objective atol = 1e-6
+end
+
 @testset "Standard-form structural change requires rebuild" begin
     qp = simple_lp()
     solver = MadIPM.MPCSolver(qp; print_level = MadNLP.ERROR, rethrow_error = true)

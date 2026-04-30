@@ -369,7 +369,13 @@ function update!(solver::UniformBatchMPCSolver; kwargs...)
         "update! requires a solver built from an original-space batch model " *
         "(e.g. ObjRHSBatchQuadraticModel); this solver was constructed from " *
         "an already-standardized batch NLP.")
-    update_standard_form!(problem.original_nlp, problem.nlp, problem.workspace; kwargs...)
-    refresh_scaling!(problem.scaler, problem.nlp)
+    unapply_scaling!(problem.scaler, problem.nlp)
+    try
+        update_standard_form!(problem.original_nlp, problem.nlp, problem.workspace; kwargs...)
+    catch
+        refresh_scaling!(problem.scaler, problem.nlp)
+        rethrow()
+    end
+    refresh_scaling!(problem.scaler, problem.nlp; force = true)
     return solver
 end

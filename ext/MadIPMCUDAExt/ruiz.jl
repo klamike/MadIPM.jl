@@ -12,18 +12,20 @@
 MadIPM._sparse_nzval(A::CUSPARSE.CuSparseMatrixCSR) = A.nzVal
 MadIPM._sparse_nzval(A::CUSPARSE.CuSparseMatrixCSC) = A.nzVal
 
-# ---- signature: size + pointer + sum of |nzval| (one scalar transfer) ----
+# ---- signature: cheap device-resident identity ----
+# `update!` forces Ruiz recomputation, so CUDA signatures only need to avoid
+# host materialization during constructor/repeated refresh paths.
 function MadIPM._signature(A::CUSPARSE.CuSparseMatrixCSR)
-    nz = A.nzVal
-    s  = length(nz) == 0 ? zero(eltype(nz)) : sum(abs, nz)
     return hash((size(A), UInt(pointer(A.rowPtr)), UInt(pointer(A.colVal)),
-                 length(nz), s))
+                 UInt(pointer(A.nzVal)), length(A.nzVal)))
 end
 function MadIPM._signature(A::CUSPARSE.CuSparseMatrixCSC)
-    nz = A.nzVal
-    s  = length(nz) == 0 ? zero(eltype(nz)) : sum(abs, nz)
     return hash((size(A), UInt(pointer(A.colPtr)), UInt(pointer(A.rowVal)),
-                 length(nz), s))
+                 UInt(pointer(A.nzVal)), length(A.nzVal)))
+end
+function MadIPM._signature(A::BatchQuadraticModels.DeviceBatchSparseOperator)
+    return hash((UInt(pointer(A.rows)), UInt(pointer(A.cols)),
+                 UInt(pointer(A.nzvals)), size(A.nzvals)))
 end
 
 # ---- row / col max-abs reductions ----
@@ -121,14 +123,58 @@ function MadIPM._row_maxabs!(r::CuVector, A::CUSPARSE.CuSparseMatrixCSC)
     return r
 end
 
+@kernel function _batch_row_maxabs_kernel!(r, @Const(rows), @Const(nzVal), nnz::Int)
+    i, b = @index(Global, NTuple)
+    @inbounds begin
+        T = eltype(r)
+        mx = zero(T)
+        for p in 1:nnz
+            if rows[p] == i
+                v = abs(nzVal[p, b]); v > mx && (mx = v)
+            end
+        end
+        r[i, b] = mx
+    end
+end
+
+@kernel function _batch_col_maxabs_kernel!(c, @Const(cols), @Const(nzVal), nnz::Int)
+    i, b = @index(Global, NTuple)
+    @inbounds begin
+        T = eltype(c)
+        mx = zero(T)
+        for p in 1:nnz
+            if cols[p] == i
+                v = abs(nzVal[p, b]); v > mx && (mx = v)
+            end
+        end
+        c[i, b] = mx
+    end
+end
+
+function MadIPM._row_maxabs!(r::CuMatrix, A::BatchQuadraticModels.DeviceBatchSparseOperator)
+    m, bs = size(r)
+    (m == 0 || bs == 0) && return r
+    _batch_row_maxabs_kernel!(CUDABackend())(r, A.rows, A.nzvals, size(A.nzvals, 1);
+                                             ndrange = (m, bs))
+    return r
+end
+
+function MadIPM._col_maxabs!(c::CuMatrix, A::BatchQuadraticModels.DeviceBatchSparseOperator)
+    n, bs = size(c)
+    (n == 0 || bs == 0) && return c
+    _batch_col_maxabs_kernel!(CUDABackend())(c, A.cols, A.nzvals, size(A.nzvals, 1);
+                                             ndrange = (n, bs))
+    return c
+end
+
 # ---- √-or-1 and convergence ----
 # `max(zero, v)` guards dead rows; broadcast avoids a bespoke kernel.
-function MadIPM._sqrt_or_one!(v::CuVector{T}) where {T}
+function MadIPM._sqrt_or_one!(v::AnyCuArray{T}) where {T}
     @. v = ifelse(v > zero(T), sqrt(v), one(T))
     return v
 end
 
-function MadIPM._converged(r::CuVector{T}, c::CuVector{T}, tol::T) where {T}
+function MadIPM._converged(r::AnyCuArray{T}, c::AnyCuArray{T}, tol::T) where {T}
     err_r = length(r) == 0 ? zero(T) : maximum(x -> abs(x - one(T)), r)
     err_c = length(c) == 0 ? zero(T) : maximum(x -> abs(x - one(T)), c)
     return max(err_r, err_c) < tol
@@ -175,6 +221,71 @@ MadIPM._scale_rows_cols_from_identity!(A::CUSPARSE.CuSparseMatrixCSR, r, c) =
 MadIPM._scale_rows_cols_from_identity!(A::CUSPARSE.CuSparseMatrixCSC, r, c) =
     MadIPM._scale_rows_cols!(A, r, c)
 
+@kernel function _unscale_csr_kernel!(rowPtr, colVal, nzVal, r, c)
+    i = @index(Global, Linear)
+    @inbounds begin
+        ri = r[i]
+        for p in rowPtr[i]:(rowPtr[i+1] - 1)
+            nzVal[p] = nzVal[p] * (ri * c[colVal[p]])
+        end
+    end
+end
+
+@kernel function _unscale_csc_kernel!(colPtr, rowVal, nzVal, r, c)
+    j = @index(Global, Linear)
+    @inbounds begin
+        cj = c[j]
+        for p in colPtr[j]:(colPtr[j+1] - 1)
+            nzVal[p] = nzVal[p] * (r[rowVal[p]] * cj)
+        end
+    end
+end
+
+function MadIPM._unscale_rows_cols_to_identity!(A::CUSPARSE.CuSparseMatrixCSR, r::CuVector, c::CuVector)
+    m = size(A, 1)
+    m == 0 && return A
+    _unscale_csr_kernel!(CUDABackend())(A.rowPtr, A.colVal, A.nzVal, r, c; ndrange = m)
+    return A
+end
+
+function MadIPM._unscale_rows_cols_to_identity!(A::CUSPARSE.CuSparseMatrixCSC, r::CuVector, c::CuVector)
+    n = size(A, 2)
+    n == 0 && return A
+    _unscale_csc_kernel!(CUDABackend())(A.colPtr, A.rowVal, A.nzVal, r, c; ndrange = n)
+    return A
+end
+
+@kernel function _batch_scale_rows_cols_kernel!(nzVal, @Const(rows), @Const(cols), @Const(r), @Const(c))
+    p, b = @index(Global, NTuple)
+    @inbounds nzVal[p, b] = nzVal[p, b] / (r[rows[p], b] * c[cols[p], b])
+end
+
+@kernel function _batch_unscale_rows_cols_kernel!(nzVal, @Const(rows), @Const(cols), @Const(r), @Const(c))
+    p, b = @index(Global, NTuple)
+    @inbounds nzVal[p, b] = nzVal[p, b] * (r[rows[p], b] * c[cols[p], b])
+end
+
+function MadIPM._scale_rows_cols!(A::BatchQuadraticModels.DeviceBatchSparseOperator,
+                                  r::CuMatrix, c::CuMatrix)
+    nnz, bs = size(A.nzvals)
+    (nnz == 0 || bs == 0) && return A
+    _batch_scale_rows_cols_kernel!(CUDABackend())(A.nzvals, A.rows, A.cols, r, c;
+                                                  ndrange = (nnz, bs))
+    return A
+end
+
+MadIPM._scale_rows_cols_from_identity!(A::BatchQuadraticModels.DeviceBatchSparseOperator, r, c) =
+    MadIPM._scale_rows_cols!(A, r, c)
+
+function MadIPM._unscale_rows_cols_to_identity!(A::BatchQuadraticModels.DeviceBatchSparseOperator,
+                                                r::CuMatrix, c::CuMatrix)
+    nnz, bs = size(A.nzvals)
+    (nnz == 0 || bs == 0) && return A
+    _batch_unscale_rows_cols_kernel!(CUDABackend())(A.nzvals, A.rows, A.cols, r, c;
+                                                    ndrange = (nnz, bs))
+    return A
+end
+
 # ---- symmetric Q ← diag(c)⁻¹ Q diag(c)⁻¹ ----
 # Stored-triangle entries each get `Q[i,j] /= c[i]*c[j]`.
 
@@ -211,3 +322,69 @@ function MadIPM._scale_symmetric_from_identity!(Q::CUSPARSE.CuSparseMatrixCSC, c
     _scale_symm_csc_kernel!(CUDABackend())(Q.colPtr, Q.rowVal, Q.nzVal, c; ndrange = n)
     return Q
 end
+
+@kernel function _unscale_symm_csr_kernel!(rowPtr, colVal, nzVal, c)
+    i = @index(Global, Linear)
+    @inbounds begin
+        ci = c[i]
+        for p in rowPtr[i]:(rowPtr[i+1] - 1)
+            nzVal[p] = nzVal[p] * (ci * c[colVal[p]])
+        end
+    end
+end
+
+@kernel function _unscale_symm_csc_kernel!(colPtr, rowVal, nzVal, c)
+    j = @index(Global, Linear)
+    @inbounds begin
+        cj = c[j]
+        for p in colPtr[j]:(colPtr[j+1] - 1)
+            nzVal[p] = nzVal[p] * (c[rowVal[p]] * cj)
+        end
+    end
+end
+
+function MadIPM._unscale_symmetric_to_identity!(Q::CUSPARSE.CuSparseMatrixCSR, c::CuVector)
+    m = size(Q, 1)
+    m == 0 && return Q
+    _unscale_symm_csr_kernel!(CUDABackend())(Q.rowPtr, Q.colVal, Q.nzVal, c; ndrange = m)
+    return Q
+end
+
+function MadIPM._unscale_symmetric_to_identity!(Q::CUSPARSE.CuSparseMatrixCSC, c::CuVector)
+    n = size(Q, 2)
+    n == 0 && return Q
+    _unscale_symm_csc_kernel!(CUDABackend())(Q.colPtr, Q.rowVal, Q.nzVal, c; ndrange = n)
+    return Q
+end
+
+@kernel function _batch_scale_symm_kernel!(nzVal, @Const(rows), @Const(cols), @Const(c))
+    p, b = @index(Global, NTuple)
+    @inbounds nzVal[p, b] = nzVal[p, b] / (c[rows[p], b] * c[cols[p], b])
+end
+
+@kernel function _batch_unscale_symm_kernel!(nzVal, @Const(rows), @Const(cols), @Const(c))
+    p, b = @index(Global, NTuple)
+    @inbounds nzVal[p, b] = nzVal[p, b] * (c[rows[p], b] * c[cols[p], b])
+end
+
+function MadIPM._scale_symmetric_from_identity!(Q::BatchQuadraticModels.DeviceBatchSparseOperator,
+                                                c::CuMatrix)
+    nnz, bs = size(Q.nzvals)
+    (nnz == 0 || bs == 0) && return Q
+    _batch_scale_symm_kernel!(CUDABackend())(Q.nzvals, Q.rows, Q.cols, c;
+                                             ndrange = (nnz, bs))
+    return Q
+end
+
+function MadIPM._unscale_symmetric_to_identity!(Q::BatchQuadraticModels.DeviceBatchSparseOperator,
+                                                c::CuMatrix)
+    nnz, bs = size(Q.nzvals)
+    (nnz == 0 || bs == 0) && return Q
+    _batch_unscale_symm_kernel!(CUDABackend())(Q.nzvals, Q.rows, Q.cols, c;
+                                               ndrange = (nnz, bs))
+    return Q
+end
+
+MadIPM._copy_for_scaling(A::BatchQuadraticModels.DeviceBatchSparseOperator) =
+    BatchQuadraticModels.DeviceBatchSparseOperator(
+        copy(A.nzvals), A.rows, A.cols, A.rowptr, A.packed, A.mean_row_nnz)

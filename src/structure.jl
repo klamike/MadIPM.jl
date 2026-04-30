@@ -223,10 +223,16 @@ unchanged; for structural changes construct a new `MPCSolver`.
 """
 function update!(solver::MPCSolver; kwargs...)
     problem = solver.problem
-    update_standard_form!(problem.original_nlp, problem.nlp, problem.workspace; kwargs...)
+    unapply_scaling!(problem.scaler, problem.nlp)
+    try
+        update_standard_form!(problem.original_nlp, problem.nlp, problem.workspace; kwargs...)
+    catch
+        refresh_scaling!(problem.scaler, problem.nlp)
+        rethrow()
+    end
     # `refresh_scaling!` re-runs Ruiz only when A / Q structurally changed
     # (signature mismatch); otherwise it reapplies the cached scales to the
     # freshly-updated c / b / bounds / x0.
-    refresh_scaling!(problem.scaler, problem.nlp)
+    refresh_scaling!(problem.scaler, problem.nlp; force = true)
     return solver
 end

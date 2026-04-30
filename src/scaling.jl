@@ -65,13 +65,13 @@ abstract type AbstractScaler end
 
 struct NullScaler <: AbstractScaler end
 
-mutable struct RuizScaler{T, VT <: AbstractVector{T}} <: AbstractScaler
-    row_scale::VT              # length m  (D_r diagonal)
-    col_scale::VT              # length n  (D_c diagonal)
+mutable struct RuizScaler{T, AT <: AbstractArray{T}} <: AbstractScaler
+    row_scale::AT              # length m or (m, batch_size) (D_r diagonal)
+    col_scale::AT              # length n or (n, batch_size) (D_c diagonal)
     opt::RuizScaling
     a_signature::UInt          # sparsity+values hash of the A used for the last compute
     q_signature::UInt          # same for Q (0 if LP / no Q)
-    applied::Bool              # has `apply_scaling!` been run with these scales yet?
+    applied::Bool              # is the std-form model currently scaled?
 end
 
 # Build a scaler sized to the std-form NLP. Scales default to `1` so an
@@ -84,6 +84,21 @@ function RuizScaler(std_nlp; opt::RuizScaling = RuizScaling())
     row = fill!(VT(undef, m), one(T))
     col = fill!(VT(undef, n), one(T))
     return RuizScaler{T, VT}(row, col, opt, zero(UInt), zero(UInt), false)
+end
+
+function RuizScaler(std_bnlp::BatchQuadraticModel; opt::RuizScaling = RuizScaling())
+    A = _std_A(std_bnlp)
+    Q = _std_Q(std_bnlp)
+    if A isa BatchSparseOperator || Q isa BatchSparseOperator
+        x0 = _scaled_x0(std_bnlp)
+        lcon = _scaled_lcon(std_bnlp)
+        T = eltype(x0)
+        MT = typeof(x0)
+        row = fill!(similar(lcon, T, size(lcon)), one(T))
+        col = fill!(similar(x0, T, size(x0)), one(T))
+        return RuizScaler{T, MT}(row, col, opt, zero(UInt), zero(UInt), false)
+    end
+    return invoke(RuizScaler, Tuple{Any}, std_bnlp; opt)
 end
 
 make_scaler(::NoScaling, _std_nlp) = NullScaler()
@@ -108,16 +123,19 @@ make_scaler(r::RuizScaling, std_nlp) = RuizScaler(std_nlp; opt = r)
 @inline _scaled_ucon(std_nlp::Union{LinearModel, QuadraticModel}) = std_nlp.data.ucon
 @inline _scaled_x0(std_nlp::Union{LinearModel, QuadraticModel})   = std_nlp.meta.x0
 
-@inline _std_A(std_bnlp::BatchQuadraticModel) =
-    BatchQuadraticModels.operator_sparse_matrix(std_bnlp.A)
-@inline _std_Q(std_bnlp::BatchQuadraticModel) =
-    BatchQuadraticModels.operator_sparse_matrix(std_bnlp.Q)
+@inline _std_operator(op::BatchSparseOperator) = op
+@inline _std_operator(op) = BatchQuadraticModels.operator_sparse_matrix(op)
+@inline _std_A(std_bnlp::BatchQuadraticModel) = _std_operator(std_bnlp.A)
+@inline _std_Q(std_bnlp::BatchQuadraticModel) = _std_operator(std_bnlp.Q)
 @inline _scaled_c(std_bnlp::BatchQuadraticModel)    = std_bnlp.c_batch
 @inline _scaled_lcon(std_bnlp::BatchQuadraticModel) = std_bnlp.meta.lcon
 @inline _scaled_ucon(std_bnlp::BatchQuadraticModel) = std_bnlp.meta.ucon
 @inline _scaled_x0(std_bnlp::BatchQuadraticModel)   = std_bnlp.meta.x0
 
 @inline _sparse_nzval(A::SparseArrays.SparseMatrixCSC) = SparseArrays.nonzeros(A)
+@inline _sparse_nzval(A::BatchSparseOperator) = A.nzvals
+@inline _nnz(A) = SparseArrays.nnz(A)
+@inline _nnz(A::BatchSparseOperator) = size(A.nzvals, 1)
 
 # ----------------------------------------------------------------------------
 # Public lifecycle.
@@ -132,22 +150,20 @@ Recompute the Ruiz scales if `A` (or `Q`) changed since the last call, then
 reapply them to the std-form model. Idempotent when nothing moved: a fresh
 signature check short-circuits both the compute and the apply.
 """
-function refresh_scaling!(scaler::RuizScaler, std_nlp)
+function refresh_scaling!(scaler::RuizScaler, std_nlp; force::Bool = false)
+    unapply_scaling!(scaler, std_nlp)
+
     a_sig = _signature(_std_A(std_nlp))
     Q = _std_Q(std_nlp)
     q_sig = Q === nothing ? zero(UInt) : _signature(Q)
-    structure_changed = a_sig != scaler.a_signature || q_sig != scaler.q_signature
+    values_changed = a_sig != scaler.a_signature || q_sig != scaler.q_signature
 
-    if structure_changed
+    if force || values_changed
         compute_scaling!(scaler, std_nlp)
         scaler.a_signature = a_sig
         scaler.q_signature = q_sig
-        scaler.applied = false
     end
-    # Always (re)apply: `update_standard_form!` writes unscaled values into
-    # `c / b / Q / A / x0`, so we have to push the cached scales back in.
     apply_scaling!(scaler, std_nlp)
-    scaler.applied = true
     return scaler
 end
 
@@ -165,7 +181,7 @@ function compute_scaling!(scaler::RuizScaler{T, VT}, std_nlp) where {T, VT}
 
     r_work = similar(row_scale)
     c_work = similar(col_scale)
-    A_work = copy(A)  # scratch: we mutate this, not the real A.
+    A_work = _copy_for_scaling(A)  # scratch: we mutate this, not the real A.
 
     tol_T = T(scaler.opt.tol)
     @inbounds for _ in 1:scaler.opt.max_iter
@@ -185,18 +201,17 @@ end
     apply_scaling!(scaler, std_nlp)
 
 Push `scaler.row_scale` / `scaler.col_scale` into the std-form data:
-`A, Q, c, b, x0` are mutated so the IPM sees the scaled problem. Safe to
-call repeatedly — always operates on the current std data, so it composes
-naturally with BQM's `update_standard_form!` dirty-tracking flow.
+`A, Q, c, b, x0` are mutated so the IPM sees the scaled problem.
 """
 apply_scaling!(::NullScaler, _std_nlp) = nothing
 function apply_scaling!(scaler::RuizScaler, std_nlp)
+    scaler.applied && return scaler
     r = scaler.row_scale
     c = scaler.col_scale
     A = _std_A(std_nlp)
     Q = _std_Q(std_nlp)
     _scale_rows_cols_from_identity!(A, r, c)  # A ← D_r⁻¹ A D_c⁻¹
-    if Q !== nothing && SparseArrays.nnz(Q) > 0
+    if Q !== nothing && _nnz(Q) > 0
         _scale_symmetric_from_identity!(Q, c) # Q ← D_c⁻¹ Q D_c⁻¹
     end
     _scaled_c(std_nlp) ./= c                   # broadcasts over columns for batch
@@ -204,6 +219,27 @@ function apply_scaling!(scaler::RuizScaler, std_nlp)
     lcon ./= r
     lcon === ucon || (ucon ./= r)               # std-form builder often aliases lcon ≡ ucon
     _scaled_x0(std_nlp) .*= c
+    scaler.applied = true
+    return scaler
+end
+
+unapply_scaling!(::NullScaler, _std_nlp) = nothing
+function unapply_scaling!(scaler::RuizScaler, std_nlp)
+    scaler.applied || return scaler
+    r = scaler.row_scale
+    c = scaler.col_scale
+    A = _std_A(std_nlp)
+    Q = _std_Q(std_nlp)
+    _unscale_rows_cols_to_identity!(A, r, c)
+    if Q !== nothing && _nnz(Q) > 0
+        _unscale_symmetric_to_identity!(Q, c)
+    end
+    _scaled_c(std_nlp) .*= c
+    lcon = _scaled_lcon(std_nlp); ucon = _scaled_ucon(std_nlp)
+    lcon .*= r
+    lcon === ucon || (ucon .*= r)
+    _scaled_x0(std_nlp) ./= c
+    scaler.applied = false
     return scaler
 end
 
@@ -225,20 +261,15 @@ end
 # ----------------------------------------------------------------------------
 # Sparsity/value signature (cheap change detection).
 # ----------------------------------------------------------------------------
-# Hashes structure (size + column pointers + row indices) plus a sketch of
-# the non-zero values. Not cryptographic — good enough to detect whether A
-# was rewritten by `update_standard_form!`.
+# Hashes structure (size + column pointers + row indices) and all non-zero
+# values. Same-structure numeric updates can change Ruiz scaling, so this must
+# not use a lossy value sketch.
 
 _signature(A::SparseArrays.SparseMatrixCSC) =
     hash((size(A), SparseArrays.getcolptr(A), SparseArrays.rowvals(A),
-          _values_sketch(SparseArrays.nonzeros(A))))
+          SparseArrays.nonzeros(A)))
 
-# Simple sketch: length + first / last / sum of non-zero values.
-function _values_sketch(v::AbstractVector)
-    n = length(v)
-    n == 0 && return hash((0,))
-    return hash((n, @inbounds(v[1]), @inbounds(v[n]), sum(v)))
-end
+_signature(A::BatchSparseOperator) = hash((A.rows, A.cols, A.nzvals))
 
 # ----------------------------------------------------------------------------
 # CPU kernels. GPU ones are defined in the CUDA extension.
@@ -258,6 +289,24 @@ function _row_maxabs!(r::AbstractVector{T}, A::SparseArrays.SparseMatrixCSC{T}) 
     return r
 end
 
+function _row_maxabs!(r::AbstractMatrix{T}, A::SparseArrays.SparseMatrixCSC{T}) where {T}
+    work = similar(r, T, size(r, 1))
+    _row_maxabs!(work, A)
+    r .= work
+    return r
+end
+
+function _row_maxabs!(r::AbstractMatrix{T}, A::BatchSparseOperator) where {T}
+    fill!(r, zero(T))
+    rows = A.rows; vals = A.nzvals
+    @inbounds for j in axes(vals, 2), p in axes(vals, 1)
+        v = abs(vals[p, j])
+        i = rows[p]
+        r[i, j] < v && (r[i, j] = v)
+    end
+    return r
+end
+
 # c[j] = max_i |A[i,j]|
 function _col_maxabs!(c::AbstractVector{T}, A::SparseArrays.SparseMatrixCSC{T}) where {T}
     fill!(c, zero(T))
@@ -273,8 +322,26 @@ function _col_maxabs!(c::AbstractVector{T}, A::SparseArrays.SparseMatrixCSC{T}) 
     return c
 end
 
+function _col_maxabs!(c::AbstractMatrix{T}, A::SparseArrays.SparseMatrixCSC{T}) where {T}
+    work = similar(c, T, size(c, 1))
+    _col_maxabs!(work, A)
+    c .= work
+    return c
+end
+
+function _col_maxabs!(c::AbstractMatrix{T}, A::BatchSparseOperator) where {T}
+    fill!(c, zero(T))
+    cols = A.cols; vals = A.nzvals
+    @inbounds for j in axes(vals, 2), p in axes(vals, 1)
+        v = abs(vals[p, j])
+        k = cols[p]
+        c[k, j] < v && (c[k, j] = v)
+    end
+    return c
+end
+
 # Replace each entry with √x if positive, else leave as 1 (dead rows/cols stay neutral).
-function _sqrt_or_one!(v::AbstractVector{T}) where {T}
+function _sqrt_or_one!(v::AbstractArray{T}) where {T}
     @inbounds for i in eachindex(v)
         v[i] = v[i] > zero(T) ? sqrt(v[i]) : one(T)
     end
@@ -296,6 +363,44 @@ end
 
 _scale_rows_cols_from_identity!(A::SparseArrays.SparseMatrixCSC, r, c) =
     _scale_rows_cols!(A, r, c)
+_scale_rows_cols_from_identity!(A::SparseArrays.SparseMatrixCSC, r::AbstractMatrix, c::AbstractMatrix) =
+    _scale_rows_cols!(A, view(r, :, 1), view(c, :, 1))
+
+function _scale_rows_cols!(A::BatchSparseOperator, r::AbstractMatrix{T},
+                           c::AbstractMatrix{T}) where {T}
+    rows = A.rows; cols = A.cols; vals = A.nzvals
+    @inbounds for j in axes(vals, 2), p in axes(vals, 1)
+        vals[p, j] = vals[p, j] / (r[rows[p], j] * c[cols[p], j])
+    end
+    return A
+end
+
+_scale_rows_cols_from_identity!(A::BatchSparseOperator, r, c) =
+    _scale_rows_cols!(A, r, c)
+
+function _unscale_rows_cols_to_identity!(A::SparseArrays.SparseMatrixCSC{T},
+                                         r::AbstractVector{T},
+                                         c::AbstractVector{T}) where {T}
+    rows = SparseArrays.rowvals(A); vals = SparseArrays.nonzeros(A)
+    @inbounds for j in 1:size(A, 2)
+        cj = c[j]
+        for p in SparseArrays.nzrange(A, j)
+            vals[p] = vals[p] * (r[rows[p]] * cj)
+        end
+    end
+    return A
+end
+_unscale_rows_cols_to_identity!(A::SparseArrays.SparseMatrixCSC, r::AbstractMatrix, c::AbstractMatrix) =
+    _unscale_rows_cols_to_identity!(A, view(r, :, 1), view(c, :, 1))
+
+function _unscale_rows_cols_to_identity!(A::BatchSparseOperator, r::AbstractMatrix{T},
+                                         c::AbstractMatrix{T}) where {T}
+    rows = A.rows; cols = A.cols; vals = A.nzvals
+    @inbounds for j in axes(vals, 2), p in axes(vals, 1)
+        vals[p, j] = vals[p, j] * (r[rows[p], j] * c[cols[p], j])
+    end
+    return A
+end
 
 # Q ← diag(c)⁻¹ Q diag(c)⁻¹  (Q is stored upper- or lower-triangular; apply to every stored entry).
 function _scale_symmetric_from_identity!(Q::SparseArrays.SparseMatrixCSC{T},
@@ -309,8 +414,45 @@ function _scale_symmetric_from_identity!(Q::SparseArrays.SparseMatrixCSC{T},
     end
     return Q
 end
+_scale_symmetric_from_identity!(Q::SparseArrays.SparseMatrixCSC, c::AbstractMatrix) =
+    _scale_symmetric_from_identity!(Q, view(c, :, 1))
 
-function _converged(r::AbstractVector{T}, c::AbstractVector{T}, tol::T) where {T}
+function _scale_symmetric_from_identity!(Q::BatchSparseOperator, c::AbstractMatrix{T}) where {T}
+    rows = Q.rows; cols = Q.cols; vals = Q.nzvals
+    @inbounds for j in axes(vals, 2), p in axes(vals, 1)
+        vals[p, j] = vals[p, j] / (c[rows[p], j] * c[cols[p], j])
+    end
+    return Q
+end
+
+function _unscale_symmetric_to_identity!(Q::SparseArrays.SparseMatrixCSC{T},
+                                         c::AbstractVector{T}) where {T}
+    rows = SparseArrays.rowvals(Q); vals = SparseArrays.nonzeros(Q)
+    @inbounds for j in 1:size(Q, 2)
+        cj = c[j]
+        for p in SparseArrays.nzrange(Q, j)
+            vals[p] = vals[p] * (c[rows[p]] * cj)
+        end
+    end
+    return Q
+end
+_unscale_symmetric_to_identity!(Q::SparseArrays.SparseMatrixCSC, c::AbstractMatrix) =
+    _unscale_symmetric_to_identity!(Q, view(c, :, 1))
+
+function _unscale_symmetric_to_identity!(Q::BatchSparseOperator, c::AbstractMatrix{T}) where {T}
+    rows = Q.rows; cols = Q.cols; vals = Q.nzvals
+    @inbounds for j in axes(vals, 2), p in axes(vals, 1)
+        vals[p, j] = vals[p, j] * (c[rows[p], j] * c[cols[p], j])
+    end
+    return Q
+end
+
+_copy_for_scaling(A::SparseArrays.SparseMatrixCSC) = copy(A)
+_copy_for_scaling(A::BatchQuadraticModels.HostBatchSparseOperator) =
+    BatchQuadraticModels.HostBatchSparseOperator(
+        copy(A.nzvals), A.rows, A.cols, A.rowptr, A.nz_idx, A.val_idx)
+
+function _converged(r::AbstractArray{T}, c::AbstractArray{T}, tol::T) where {T}
     m = zero(T)
     @inbounds for x in r; d = abs(x - one(T)); d > m && (m = d); end
     @inbounds for x in c; d = abs(x - one(T)); d > m && (m = d); end
