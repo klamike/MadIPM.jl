@@ -34,23 +34,6 @@ function import_mps(filename)
     return data
 end
 
-"""
-    qm_from_qpsdata(qps::QPSData)
-
-Build a `BatchQuadraticModels.QuadraticModel` from a parsed `QPSData`.
-"""
-function qm_from_qpsdata(qps::QPSData)
-    nvar = length(qps.lvar); ncon = length(qps.lcon)
-    A = SparseMatrixCOO(ncon, nvar, qps.arows, qps.acols, qps.avals)
-    H = SparseMatrixCOO(nvar, nvar, qps.qrows, qps.qcols, qps.qvals)
-    data = QPData(A, qps.c, H;
-        lvar = qps.lvar, uvar = qps.uvar,
-        lcon = qps.lcon, ucon = qps.ucon,
-        c0 = qps.c0)
-    # QPSReader returns `:notset` when the MPS file omits an OBJSENSE section;
-    # treat that as minimization (the LP convention) — only flip on explicit `:max`.
-    return QuadraticModel(data; minimize = (qps.objsense != :max), name = qps.name)
-end
 
 """
     scale_qp(qp; eps = 1e-3)

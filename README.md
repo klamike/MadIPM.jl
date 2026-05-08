@@ -35,25 +35,16 @@ JuMP.optimize!(model)
 
 ### BatchQuadraticModels
 
-We detail here how to solve a LP stored in a MPS file `mylp.mps` using
+To solve an LP/QP stored in an MPS file `mylp.mps`, load
 [QPSReader](https://github.com/JuliaSmoothOptimizers/QPSReader.jl) and
 [BatchQuadraticModels](https://github.com/klamike/BatchQuadraticModels.jl).
 
 ```julia
 using QPSReader
-using BatchQuadraticModels
-using SparseMatricesCOO: SparseMatrixCOO
+using BatchQuadraticModels    # loads `BatchQuadraticModelsQPSReaderExt`
 using MadIPM
 
-qpdat = readqps("mylp.mps")
-nvar, ncon = length(qpdat.lvar), length(qpdat.lcon)
-A = SparseMatrixCOO(ncon, nvar, qpdat.arows, qpdat.acols, qpdat.avals)
-H = SparseMatrixCOO(nvar, nvar, qpdat.qrows, qpdat.qcols, qpdat.qvals)
-data = QPData(A, qpdat.c, H;
-    lvar = qpdat.lvar, uvar = qpdat.uvar,
-    lcon = qpdat.lcon, ucon = qpdat.ucon,
-    c0 = qpdat.c0)
-qp = QuadraticModel(data; minimize = (qpdat.objsense == :min))
+qp = LinearModel(readqps("mylp.mps"))   # use QuadraticModel(...) for QPs
 results = madipm(qp)
 ```
 

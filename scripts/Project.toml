@@ -13,17 +13,13 @@ MadNLP = "2621e9c9-9eb4-46b1-8089-e8c72242dfb6"
 MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
 MadNLPHSL = "7fb6135f-58fe-4112-84ca-653cf5be0c77"
 NLPModels = "a4795742-8479-5a88-8948-cc11e1c8c1a6"
-BQMPSLP = "ef7f38f3-b543-4219-892d-e0f472564133"
-BQMPSLP_jll = "f21d708b-afb1-4941-8a85-571bbd38ad3d"
 QPSReader = "10f199a5-22af-520b-b891-7ce84a7b1bd0"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 SparseMatricesCOO = "fa32481b-f100-4b48-8dc8-c62f61b13870"
 
 [sources]
 BatchQuadraticModels = {rev = "mk/single", url = "https://github.com/klamike/BatchQuadraticModels.jl.git"}
-MadIPM = { path = ".." }
-BQMPSLP      = {rev = "mk/single", subdir = "lib/BQMPSLP",              url = "https://github.com/klamike/BatchQuadraticModels.jl.git"}
-BQMPSLP_jll  = {rev = "mk/single", subdir = "lib/BQMPSLP_jll",     url = "https://github.com/klamike/BatchQuadraticModels.jl.git"}
+MadIPM = {path = ".."}
 
 [compat]
 Adapt = "4"

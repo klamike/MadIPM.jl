@@ -331,8 +331,7 @@ IPM together with the [`PresolveStatus`](@ref):
   `model` is the original `qp`.
 
 `presolver` defaults to `BasicPresolver` (pure-Julia, fixed-vars + empty
-rows/cols). Pass `PaPILOPresolver()` or `PSLPPresolver()` for richer LP-only
-reductions (after `using BQMPaPILO` / `using BQMPSLP`).
+rows/cols).
 """
 function presolve_qp(qp::_BQMScalarModel; presolver::AbstractPresolver = BasicPresolver())
     status, res = apply_presolve(presolver, qp)

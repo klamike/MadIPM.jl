@@ -23,7 +23,7 @@ function run_benchmark(src, probs; reformulate::Bool=false, test_reader::Bool=fa
         @info "The problem $prob was imported."
 
         if !test_reader
-            qp = qm_from_qpsdata(qpdat)
+            qp = QuadraticModel(qpdat)
             presolved_qp, pstatus = MadIPM.presolve_qp(qp)
             if pstatus ∈ (PRESOLVE_INFEASIBLE, PRESOLVE_UNBOUNDED,
                           PRESOLVE_UNBOUNDED_OR_INFEASIBLE, PRESOLVE_SOLVED)
