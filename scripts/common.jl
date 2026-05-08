@@ -1,12 +1,12 @@
-using QuadraticModels
+using BatchQuadraticModels
+import BatchQuadraticModels: LPData, QPData, LinearModel, QuadraticModel,
+    operator_sparse_matrix, ruiz_equilibration!
 using QPSReader
 using GZip
 using CodecBzip2
-using HSL
 using NLPModels
 using SparseArrays
-
-import QuadraticModels: SparseMatrixCOO
+using SparseMatricesCOO: SparseMatrixCOO
 
 """
     import_mps(filename::String)
@@ -16,7 +16,6 @@ Import instance from the file whose path is specified in `filename`.
 The function parses the file's extension to adapt the import. If the extension
 is `.mps`, `.sif` or `.SIF`, it directly reads the file. If the extension
 is `.gz` or `.bz2`, it decompresses the file using gzip or bzip2, respectively.
-
 """
 function import_mps(filename)
     ext = match(r"(.*)\.(.*)", filename).captures[2]
@@ -35,67 +34,31 @@ function import_mps(filename)
     return data
 end
 
-function _scale_coo!(A, Dr, Dc)
-    k = 1
-    for (i, j) in zip(A.rows, A.cols)
-        A.vals[k] = A.vals[k] / (Dr[i] * Dc[j])
-        k += 1
-    end
+"""
+    qm_from_qpsdata(qps::QPSData)
+
+Build a `BatchQuadraticModels.QuadraticModel` from a parsed `QPSData`.
+"""
+function qm_from_qpsdata(qps::QPSData)
+    nvar = length(qps.lvar); ncon = length(qps.lcon)
+    A = SparseMatrixCOO(ncon, nvar, qps.arows, qps.acols, qps.avals)
+    H = SparseMatrixCOO(nvar, nvar, qps.qrows, qps.qcols, qps.qvals)
+    data = QPData(A, qps.c, H;
+        lvar = qps.lvar, uvar = qps.uvar,
+        lcon = qps.lcon, ucon = qps.ucon,
+        c0 = qps.c0)
+    # QPSReader returns `:notset` when the MPS file omits an OBJSENSE section;
+    # treat that as minimization (the LP convention) — only flip on explicit `:max`.
+    return QuadraticModel(data; minimize = (qps.objsense != :max), name = qps.name)
 end
 
 """
-    scale_qp(qp::QuadraticModel)
+    scale_qp(qp; eps = 1e-3)
 
-Scale QP using Ruiz' equilibration method.
-
-The function scales the Jacobian ``A`` as ``As = Dr * A * Dc``, with ``As``
-a matrix whose rows and columns have an infinite norm close to 1.
-
-The scaling is computed using `HSL.mc77`, implementing the Ruiz equilibration method.
-
+Ruiz-equilibrate the constraint matrix of `qp` using BQM's `ruiz_equilibration`,
+then apply the resulting `(Dr, Dc)` to the model via `scale_model`.
 """
-function scale_qp(qp::QuadraticModel)
-    A = qp.data.A
-    m, n = size(A)
-
-    if !LIBHSL_isfunctional()
-        return qp
-    end
-
-    A_csc = sparse(A.rows, A.cols, A.vals, m, n)
-    Dr, Dc = HSL.mc77(A_csc, 0)
-
-    Hs = copy(qp.data.H)
-    As = copy(qp.data.A)
-    _scale_coo!(Hs, Dc, Dc)
-    _scale_coo!(As, Dr, Dc)
-
-    data = QuadraticModels.QPData(
-        qp.data.c0,
-        qp.data.c ./ Dc,
-        qp.data.v,
-        Hs,
-        As,
-    )
-
-    return QuadraticModel(
-        NLPModelMeta(
-            qp.meta.nvar;
-            ncon=qp.meta.ncon,
-            lvar=qp.meta.lvar .* Dc,
-            uvar=qp.meta.uvar .* Dc,
-            lcon=qp.meta.lcon ./ Dr,
-            ucon=qp.meta.ucon ./ Dr,
-            x0=qp.meta.x0 .* Dc,
-            y0=qp.meta.y0 ./ Dr,
-            nnzj=qp.meta.nnzj,
-            lin_nnzj=qp.meta.nnzj,
-            lin=qp.meta.lin,
-            nnzh=qp.meta.nnzh,
-            minimize=qp.meta.minimize,
-        ),
-        Counters(),
-        data,
-    )
+function scale_qp(qp::QuadraticModel; eps = 1e-3)
+    _, scaling = ruiz_equilibration(operator_sparse_matrix(qp.data.A); eps)
+    return scale_model(qp, scaling.row, scaling.col)
 end
-

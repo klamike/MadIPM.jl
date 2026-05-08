@@ -1,8 +1,9 @@
+using Adapt
 using DelimitedFiles
 using MadNLP
 using MadIPM
 using QPSReader
-using QuadraticModels
+using BatchQuadraticModels
 using KernelAbstractions
 using MadNLPGPU
 using CUDA
@@ -25,14 +26,18 @@ function run_benchmark(src, probs; reformulate::Bool=false, test_reader::Bool=fa
 
         if !test_reader
             # Instantiate QuadraticModel
-            qp = QuadraticModel(qpdat)
-            presolved_qp, flag = MadIPM.presolve_qp(qp)
-            !flag && continue  # problem already solved, unbounded or infeasible
+            qp = qm_from_qpsdata(qpdat)
+            presolved_qp, pstatus = MadIPM.presolve_qp(qp)
+            if pstatus ∈ (PRESOLVE_INFEASIBLE, PRESOLVE_UNBOUNDED,
+                          PRESOLVE_UNBOUNDED_OR_INFEASIBLE, PRESOLVE_SOLVED)
+                @info "  $prob skipped: presolve $pstatus"
+                continue
+            end
             scaled_qp = scale_qp(presolved_qp)
             qp_cpu = reformulate ? MadIPM.standard_form_qp(scaled_qp) : scaled_qp
 
             # Transfer data to the GPU
-            qp_gpu = convert(QuadraticModel{Float64, CuVector{Float64}}, qp_cpu)
+            qp_gpu = Adapt.adapt(CuArray, qp_cpu)
 
             try
                 solver = MadIPM.MPCSolver(

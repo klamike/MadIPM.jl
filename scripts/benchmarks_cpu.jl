@@ -3,7 +3,7 @@ using MadNLP
 using MadIPM
 using MadNLPHSL
 using QPSReader
-using QuadraticModels
+using BatchQuadraticModels
 using SparseArrays
 
 include("common.jl")
@@ -23,9 +23,13 @@ function run_benchmark(src, probs; reformulate::Bool=false, test_reader::Bool=fa
         @info "The problem $prob was imported."
 
         if !test_reader
-            qp = QuadraticModel(qpdat)
-            presolved_qp, flag = MadIPM.presolve_qp(qp)
-            !flag && continue  # problem already solved, unbounded or infeasible
+            qp = qm_from_qpsdata(qpdat)
+            presolved_qp, pstatus = MadIPM.presolve_qp(qp)
+            if pstatus ∈ (PRESOLVE_INFEASIBLE, PRESOLVE_UNBOUNDED,
+                          PRESOLVE_UNBOUNDED_OR_INFEASIBLE, PRESOLVE_SOLVED)
+                @info "  $prob skipped: presolve $pstatus"
+                continue
+            end
             scaled_qp = scale_qp(presolved_qp)
             qp_cpu = reformulate ? MadIPM.standard_form_qp(scaled_qp) : scaled_qp
 
@@ -58,17 +62,25 @@ function run_benchmark(src, probs; reformulate::Bool=false, test_reader::Bool=fa
     return results
 end
 
-# src = fetch_netlib()
-# name_results = "benchmark-netlib-cpu.txt"
-# mps_files = filter(x -> endswith(x, ".SIF") && !(x in excluded_netlib), readdir(src))
+# Match the GPU bench's skip list so the two are directly comparable.
+const _LARGE_NETLIB_SKIP = Set([
+  "80BAU3B.SIF", "DFL001.SIF", "FIT2D.SIF", "FIT2P.SIF",
+  "MAROS-R7.SIF", "PILOT-WE.SIF", "PILOT.SIF", "PILOT87.SIF",
+  "QAP12.SIF", "QAP15.SIF", "STOCFOR3.SIF",
+])
+
+src = QPSReader.fetch_netlib()
+name_results = "benchmark-netlib-cpu.txt"
+skip = excluded_netlib ∪ _LARGE_NETLIB_SKIP
+mps_files = filter(x -> endswith(x, ".SIF") && !(x in skip), sort(readdir(src)))
 
 # src = fetch_mm()
 # name_results = "benchmark-mm-cpu.txt"
 # mps_files = filter(x -> endswith(x, ".SIF") && !(x in excluded_mm), readdir(src))
 
-src = joinpath(@__DIR__, "instances", "miplib2010")
-mps_files = readdlm(joinpath(@__DIR__, "miplib_problems.txt"))[:]
-name_results = "benchmark-miplib-cpu.txt"
+# src = joinpath(@__DIR__, "instances", "miplib2010")
+# mps_files = readdlm(joinpath(@__DIR__, "miplib_problems.txt"))[:]
+# name_results = "benchmark-miplib-cpu.txt"
 
 reformulate = true
 test_reader = false

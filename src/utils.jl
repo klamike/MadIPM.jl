@@ -318,20 +318,26 @@ _nzval(A::SparseArrays.SparseMatrixCSC) = A.nzval
 const _BQMScalarModel = Union{LinearModel, QuadraticModel}
 
 """
-    presolved_qp, flag = presolve_qp(qp; presolver = BasicPresolver())
+    model, status = presolve_qp(qp; presolver = BasicPresolver())
 
-Run a presolve pass on `qp`. If reductions are found, returns the reduced model
-and `flag = true`. Otherwise — including the infeasible/unbounded/already-solved
-cases that produce no usable reduced model for the downstream IPM — returns the
-original `qp` with `flag = false`.
+Run a presolve pass on `qp`. Always returns a model the caller can hand to the
+IPM together with the [`PresolveStatus`](@ref):
+
+- `PRESOLVE_REDUCED`     — `model` is the reduced QP/LP.
+- `PRESOLVE_UNCHANGED`   — `model` is the original `qp` (presolver found nothing
+                            to reduce; still solvable).
+- `PRESOLVE_INFEASIBLE` / `PRESOLVE_UNBOUNDED` / `PRESOLVE_SOLVED` /
+  `PRESOLVE_UNBOUNDED_OR_INFEASIBLE` — caller should skip the IPM solve;
+  `model` is the original `qp`.
 
 `presolver` defaults to `BasicPresolver` (pure-Julia, fixed-vars + empty
 rows/cols). Pass `PaPILOPresolver()` or `PSLPPresolver()` for richer LP-only
-reductions (after `using PaPILO` / `using PSLP`).
+reductions (after `using BQMPaPILO` / `using BQMPSLP`).
 """
 function presolve_qp(qp::_BQMScalarModel; presolver::AbstractPresolver = BasicPresolver())
     status, res = apply_presolve(presolver, qp)
-    return status == PRESOLVE_REDUCED ? (res.reduced_model::typeof(qp), true) : (qp, false)
+    model = status == PRESOLVE_REDUCED ? res.reduced_model::typeof(qp) : qp
+    return model, status
 end
 
 """

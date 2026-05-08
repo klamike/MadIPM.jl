@@ -191,17 +191,18 @@ end
     sol_ref = MadIPM.solve!(qp_solver)
 
     @testset "Presolve" begin
-        # simple_lp() has nothing reducible → unchanged, flag=false.
-        _, flag = MadIPM.presolve_qp(qp)
-        @test !flag
+        # simple_lp() has nothing reducible → unchanged
+        m, status = MadIPM.presolve_qp(qp)
+        @test status == BatchQuadraticModels.PRESOLVE_UNCHANGED
+        @test m === qp
 
         # model with fixed variable should reduce
         qp_fixed = QuadraticModel([1.0, 1.0, 1.0], Int[], Int[], Float64[];
             Arows=[1,1], Acols=[1,2], Avals=[1.0, 1.0],
             lcon=[1.0], ucon=[1.0],
             lvar=[0.0, 0.0, 1.0], uvar=[Inf, Inf, 1.0])
-        red, flag = MadIPM.presolve_qp(qp_fixed)
-        @test flag
+        red, status = MadIPM.presolve_qp(qp_fixed)
+        @test status == BatchQuadraticModels.PRESOLVE_REDUCED
         @test NLPModels.get_nvar(red) == 2
     end
 
