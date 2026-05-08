@@ -28,8 +28,8 @@ function run_benchmark(src, probs; reformulate::Bool=false, test_reader::Bool=fa
             # Instantiate QuadraticModel
             qp = QuadraticModel(qpdat)
             presolved_qp, pstatus = MadIPM.presolve_qp(qp)
-            if pstatus ∈ (PRESOLVE_INFEASIBLE, PRESOLVE_UNBOUNDED,
-                          PRESOLVE_UNBOUNDED_OR_INFEASIBLE, PRESOLVE_SOLVED)
+            if pstatus ∈ (BQMP.PRESOLVE_INFEASIBLE, BQMP.PRESOLVE_UNBOUNDED,
+                          BQMP.PRESOLVE_UNBOUNDED_OR_INFEASIBLE, BQMP.PRESOLVE_SOLVED)
                 @info "  $prob skipped: presolve $pstatus"
                 continue
             end

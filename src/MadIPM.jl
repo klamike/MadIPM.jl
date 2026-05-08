@@ -8,17 +8,20 @@ import MadNLP: full, LDLFactorizations
 import NLPModels
 
 import BatchQuadraticModels
+const BQM = BatchQuadraticModels
+const BQMP = BQM.Presolve
 import BatchQuadraticModels:
   LinearModel, QuadraticModel, LPData, QPData,
   ObjRHSBatchQuadraticModel,
-  AbstractPresolver, BasicPresolver, NoPresolver,
-  PRESOLVE_REDUCED, PRESOLVE_UNCHANGED, PRESOLVE_INFEASIBLE,
-  PRESOLVE_UNBOUNDED, PRESOLVE_UNBOUNDED_OR_INFEASIBLE, PRESOLVE_SOLVED,
-  apply_presolve, recover_solution,
   batch_spmv!,
   batch_mapreduce!,
   batch_maximum!,
   operator_sparse_matrix
+import BatchQuadraticModels.Presolve:
+  AbstractPresolver, BasicPresolver, NoPresolver,
+  PRESOLVE_REDUCED, PRESOLVE_UNCHANGED, PRESOLVE_INFEASIBLE,
+  PRESOLVE_UNBOUNDED, PRESOLVE_UNBOUNDED_OR_INFEASIBLE, PRESOLVE_SOLVED,
+  apply_presolve, recover_solution
 import SparseMatricesCOO: SparseMatrixCOO
 
 include("utils.jl")

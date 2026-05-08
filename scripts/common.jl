@@ -1,6 +1,9 @@
 using BatchQuadraticModels
 import BatchQuadraticModels: LPData, QPData, LinearModel, QuadraticModel,
-    operator_sparse_matrix, ruiz_equilibration!
+    operator_sparse_matrix
+const BQM = BatchQuadraticModels
+const BQMS = BQM.Scaling
+const BQMP = BQM.Presolve
 using QPSReader
 using GZip
 using CodecBzip2
@@ -42,6 +45,6 @@ Ruiz-equilibrate the constraint matrix of `qp` using BQM's `ruiz_equilibration`,
 then apply the resulting `(Dr, Dc)` to the model via `scale_model`.
 """
 function scale_qp(qp::QuadraticModel; eps = 1e-3)
-    _, scaling = ruiz_equilibration(operator_sparse_matrix(qp.data.A); eps)
-    return scale_model(qp, scaling.row, scaling.col)
+    _, scaling = BQMS.ruiz_equilibration(operator_sparse_matrix(qp.data.A); eps)
+    return BQMS.scale_model(qp, scaling.row, scaling.col)
 end

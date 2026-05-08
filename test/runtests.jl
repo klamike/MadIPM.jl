@@ -193,7 +193,7 @@ end
     @testset "Presolve" begin
         # simple_lp() has nothing reducible → unchanged
         m, status = MadIPM.presolve_qp(qp)
-        @test status == BatchQuadraticModels.PRESOLVE_UNCHANGED
+        @test status == BatchQuadraticModels.Presolve.PRESOLVE_UNCHANGED
         @test m === qp
 
         # model with fixed variable should reduce
@@ -202,7 +202,7 @@ end
             lcon=[1.0], ucon=[1.0],
             lvar=[0.0, 0.0, 1.0], uvar=[Inf, Inf, 1.0])
         red, status = MadIPM.presolve_qp(qp_fixed)
-        @test status == BatchQuadraticModels.PRESOLVE_REDUCED
+        @test status == BatchQuadraticModels.Presolve.PRESOLVE_REDUCED
         @test NLPModels.get_nvar(red) == 2
     end
 
