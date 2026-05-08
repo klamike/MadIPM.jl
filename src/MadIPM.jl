@@ -6,16 +6,20 @@ import SparseArrays
 import MadNLP
 import MadNLP: full, LDLFactorizations
 import NLPModels
-import QuadraticModels
-import QuadraticModels: QPData, QuadraticModel, SparseMatrixCOO
 
 import BatchQuadraticModels
 import BatchQuadraticModels:
+  LinearModel, QuadraticModel, LPData, QPData,
   ObjRHSBatchQuadraticModel,
-  BatchSparseOp,
+  AbstractPresolver, BasicPresolver, NoPresolver,
+  PRESOLVE_REDUCED, PRESOLVE_UNCHANGED, PRESOLVE_INFEASIBLE,
+  PRESOLVE_UNBOUNDED, PRESOLVE_UNBOUNDED_OR_INFEASIBLE, PRESOLVE_SOLVED,
+  apply_presolve, recover_solution,
   batch_spmv!,
   batch_mapreduce!,
-  batch_maximum!
+  batch_maximum!,
+  operator_sparse_matrix
+import SparseMatricesCOO: SparseMatrixCOO
 
 include("utils.jl")
 include("structure.jl")

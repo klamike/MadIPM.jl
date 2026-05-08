@@ -33,17 +33,27 @@ model = Model(MadIPM.Optimizer)
 JuMP.optimize!(model)
 ```
 
-### QuadraticModels
+### BatchQuadraticModels
 
-We detail here how to solve a LP stored in a MPS file `mylp.mps` using [QPSReader](https://github.com/JuliaSmoothOptimizers/QPSReader.jl) and [QuadraticModels](https://github.com/JuliaSmoothOptimizers/QuadraticModels.jl).
+We detail here how to solve a LP stored in a MPS file `mylp.mps` using
+[QPSReader](https://github.com/JuliaSmoothOptimizers/QPSReader.jl) and
+[BatchQuadraticModels](https://github.com/klamike/BatchQuadraticModels.jl).
 
 ```julia
 using QPSReader
-using QuadraticModels
+using BatchQuadraticModels
+using SparseMatricesCOO: SparseMatrixCOO
 using MadIPM
 
 qpdat = readqps("mylp.mps")
-qp = QuadraticModel(qpdat)
+nvar, ncon = length(qpdat.lvar), length(qpdat.lcon)
+A = SparseMatrixCOO(ncon, nvar, qpdat.arows, qpdat.acols, qpdat.avals)
+H = SparseMatrixCOO(nvar, nvar, qpdat.qrows, qpdat.qcols, qpdat.qvals)
+data = QPData(A, qpdat.c, H;
+    lvar = qpdat.lvar, uvar = qpdat.uvar,
+    lcon = qpdat.lcon, ucon = qpdat.ucon,
+    c0 = qpdat.c0)
+qp = QuadraticModel(data; minimize = (qpdat.objsense == :min))
 results = madipm(qp)
 ```
 
@@ -66,10 +76,10 @@ It requires specifying your problem in a `QuadraticProblem` first.
 
 The data are moved to the GPU using:
 ```julia
-using CUDA, KernelAbstractions, MadNLPGPU
+using Adapt, CUDA, KernelAbstractions, MadNLPGPU
 using MadIPM
 
-qp_gpu = convert(QuadraticModel{Float64, CuVector{Float64}}, qp)
+qp_gpu = Adapt.adapt(CuArray, qp)
 ```
 Then, you can pass the problem `qp_gpu` to MadIPM by switching
 the linear solver to NVIDIA cuDSS:

@@ -1,3 +1,4 @@
+using Adapt
 using KernelAbstractions
 using MadNLPGPU
 using BatchQuadraticModels: ObjRHSBatchQuadraticModel, BatchQuadraticModel
@@ -9,10 +10,7 @@ function _gpu_batch(qps; Model=ObjRHSBatchQuadraticModel, atol=1e-6, batch_kwarg
         @test r.status == MadNLP.SOLVE_SUCCEEDED
     end
     cpu_bnlp = Model(qps)
-
-    # TODO: make this consistent in BQM
-    CuModel = Model{Float64, Model <: ObjRHSBatchQuadraticModel ? CuVector{Float64} : CuMatrix{Float64}}
-    gpu_bnlp = convert(CuModel, cpu_bnlp)
+    gpu_bnlp = Adapt.adapt(CuArray, cpu_bnlp)
     stats = MadIPM.madipm_batch(gpu_bnlp;
         print_level=MadNLP.ERROR,
         uniformbatch_linear_solver=MadNLPGPU.CUDSSSolver,
@@ -29,7 +27,7 @@ end
 
 @testset "GPU gather/scatter" begin
     cpu_bnlp = BatchQuadraticModel([_lp() for _ in 1:4])
-    gpu_bnlp = convert(BatchQuadraticModel{Float64, CuMatrix{Float64}}, cpu_bnlp)
+    gpu_bnlp = Adapt.adapt(CuArray, cpu_bnlp)
     solver = MadIPM.UniformBatchMPCSolver(gpu_bnlp;
         print_level=MadNLP.ERROR, uniformbatch_linear_solver=MadNLPGPU.CUDSSSolver)
     bvs = solver.batch_views
@@ -111,7 +109,7 @@ end
 
 @testset "residual check INTERNAL_ERROR" begin
     cpu_bnlp = ObjRHSBatchQuadraticModel([_lp() for _ in 1:3])
-    gpu_bnlp = convert(ObjRHSBatchQuadraticModel{Float64, CuVector{Float64}}, cpu_bnlp)
+    gpu_bnlp = Adapt.adapt(CuArray, cpu_bnlp)
     stats = MadIPM.madipm_batch(gpu_bnlp;
         print_level=MadNLP.ERROR,
         uniformbatch_linear_solver=MadNLPGPU.CUDSSSolver,

@@ -15,13 +15,17 @@ function zero_inactive_step!(batch_solver::AbstractBatchMPCSolver{T}) where T
 end
 
 function _build_batch_op(nzVals, nz_map, val_map, coo_I, nrows)
-    rowptr, colidx = BatchQuadraticModels._coo_to_csr(Vector{Int}(coo_I), nrows)
-    return BatchQuadraticModels._build_storage_op(
-        nzVals,
-        rowptr,
-        Vector{Int}(nz_map),
-        Vector{Int}(val_map),
-        colidx,
+    # Stay on the input's backend; only normalize eltype to `Int` so dispatch
+    # hits `_coo_to_csr(::AbstractVector{Int}, ::Int)` and (when `nzVals` is a
+    # `CuMatrix`) the all-device `_build_op(::CuMatrix, ::CuVector...)` overload
+    # rather than the host-build-then-adapt fallback.
+    rows = similar(coo_I, Int);  rows .= coo_I
+    cols = similar(val_map, Int); cols .= val_map
+    nzm  = similar(nz_map, Int);  nzm  .= nz_map
+    rowptr, colidx = BatchQuadraticModels._coo_to_csr(rows, nrows)
+    return BatchQuadraticModels._build_op(
+        nzVals, rows, cols, rowptr,
+        nzm, cols, colidx,
     )
 end
 

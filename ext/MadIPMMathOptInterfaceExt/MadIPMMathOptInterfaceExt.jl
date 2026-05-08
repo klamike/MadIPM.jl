@@ -13,8 +13,10 @@
 
 module MadIPMMathOptInterfaceExt
 
+using Adapt
 using MathOptInterface
-using QuadraticModels
+using BatchQuadraticModels
+using SparseMatricesCOO: SparseMatrixCOO
 import NLPModels
 import MadNLP
 import MadIPM

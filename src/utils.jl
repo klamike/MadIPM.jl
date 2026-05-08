@@ -312,33 +312,26 @@ _rowval(A::SparseArrays.SparseMatrixCSC) = A.rowval
 _nzval(A::SparseArrays.SparseMatrixCSC) = A.nzval
 
 #=
-    QuadraticModels wrapper
+    BatchQuadraticModels wrapper
 =#
 
-"""
-    presolved_qp, flag = presolve_qp(qp::QuadraticModel)
+const _BQMScalarModel = Union{LinearModel, QuadraticModel}
 
-Run basic presolve routines implemented in `QuadraticModels.presolve` and return
-a new QuadraticModel if flag is `true`.
-
-If `flag` is `false`, the initial `qp` is returned.
 """
-function presolve_qp(qp::QuadraticModels.QuadraticModel)
-    # Use routine implemented in QuadraticModels
-    res = QuadraticModels.presolve(qp)
-    qp_presolved = res.solver_specific[:presolvedQM]
-    if qp_presolved != nothing
-        new_qp = QuadraticModels.QuadraticModel(
-            qp_presolved.meta,
-            qp_presolved.counters,
-            qp_presolved.data,
-        )
-        resize!(new_qp.data.v, NLPModels.get_nvar(new_qp))
-        return new_qp, true
-    else
-        # unbounded, infeasible or nvarps == 0
-        return qp, false
-    end
+    presolved_qp, flag = presolve_qp(qp; presolver = BasicPresolver())
+
+Run a presolve pass on `qp`. If reductions are found, returns the reduced model
+and `flag = true`. Otherwise — including the infeasible/unbounded/already-solved
+cases that produce no usable reduced model for the downstream IPM — returns the
+original `qp` with `flag = false`.
+
+`presolver` defaults to `BasicPresolver` (pure-Julia, fixed-vars + empty
+rows/cols). Pass `PaPILOPresolver()` or `PSLPPresolver()` for richer LP-only
+reductions (after `using PaPILO` / `using PSLP`).
+"""
+function presolve_qp(qp::_BQMScalarModel; presolver::AbstractPresolver = BasicPresolver())
+    status, res = apply_presolve(presolver, qp)
+    return status == PRESOLVE_REDUCED ? (res.reduced_model::typeof(qp), true) : (qp, false)
 end
 
 """
@@ -369,7 +362,8 @@ min_{x,s,w}  c'x
 ```
 Equality constraints are preserved as-is.
 """
-function standard_form_qp(qp::QuadraticModels.QuadraticModel)
+function standard_form_qp(qp::_BQMScalarModel)
+    T = eltype(qp.data.c)
     n = NLPModels.get_nvar(qp)
     m = NLPModels.get_ncon(qp)
 
@@ -383,121 +377,91 @@ function standard_form_qp(qp::QuadraticModels.QuadraticModel)
     end
     ns = length(ind_ineq)
 
-    # Count upper-bounds in x
+    # Variable bound classification
     ind_rng = Int[]
     ind_only_ub = Int[]
     ind_fixed = Int[]
-    xu = Float64[]
+    xu = T[]
     for i in 1:n
         if (lvar[i] == uvar[i])
-            # Fixed variable
             push!(ind_fixed, i)
         elseif (-Inf < lvar[i] < uvar[i] < Inf)
-            # Range bounds
-            push!(ind_rng, i)
-            push!(xu, uvar[i])
+            push!(ind_rng, i); push!(xu, uvar[i])
         elseif (uvar[i] < Inf)
-            # Only upper bounds
             push!(ind_only_ub, i)
         end
     end
-
-    # Count upper-bounds in future slack s
+    # Slack-side classification (upper bounds on slack s for each ineq row)
     for (k, i) in enumerate(ind_ineq)
         if (-Inf < lcon[i] < ucon[i] < Inf)
-            # Range bounds
-            push!(ind_rng, k + n)
-            push!(xu, ucon[i])
+            push!(ind_rng, k + n); push!(xu, ucon[i])
         elseif (ucon[i] < Inf)
-            # Only upper bounds
             push!(ind_only_ub, k + n)
         end
     end
 
-    # Build problem
     nw = length(ind_rng)
     nvar = n + ns + nw
     ncon = m + nw
 
-    # Build A and H
-    Hs = SparseMatrixCOO(nvar, nvar, qp.data.H.rows, qp.data.H.cols, qp.data.H.vals)
+    # Pull A's COO triple from BQM's SparseOperator wrapping. The source is what
+    # the user constructed with (typically SparseMatrixCOO) and exposes COO via
+    # findnz — works for both COO and CSC sources.
+    A_src = operator_sparse_matrix(qp.data.A)
+    Ai, Aj, Ax = SparseArrays.findnz(A_src)
 
-    Ai, Aj, Ax = SparseArrays.findnz(qp.data.A)
-    Bi, Bj, Bx = similar(Ai, ns+2*nw), similar(Aj, ns+2nw), similar(Ax, ns+2*nw)
-
+    Bi = Vector{Int}(undef, ns + 2nw)
+    Bj = Vector{Int}(undef, ns + 2nw)
+    Bx = Vector{T}(undef, ns + 2nw)
     cnt = 1
     # Slack contribution Ax - s = 0
     for (k, i) in enumerate(ind_ineq)
-        Bi[cnt] = i
-        Bj[cnt] = n + k
-        Bx[cnt] = -1.0
-        cnt += 1
+        Bi[cnt] = i; Bj[cnt] = n + k; Bx[cnt] = -one(T); cnt += 1
     end
-    # Range reformulation x + w = xu
+    # Range reformulation x + w = xu (one new equality row per ranged var/slack)
     for (k, i) in enumerate(ind_rng)
-        Bi[cnt] = m + k
-        Bj[cnt] = i
-        Bx[cnt] = 1.0
-        cnt += 1
-        Bi[cnt] = m + k
-        Bj[cnt] = k + n + ns
-        Bx[cnt] = 1.0
-        cnt += 1
+        Bi[cnt] = m + k; Bj[cnt] = i;          Bx[cnt] = one(T); cnt += 1
+        Bi[cnt] = m + k; Bj[cnt] = k + n + ns; Bx[cnt] = one(T); cnt += 1
     end
 
-    As = SparseMatrixCOO(ncon, nvar, [Ai; Bi], [Aj; Bj], [Ax; Bx])
+    As = SparseMatrixCOO(ncon, nvar, vcat(Ai, Bi), vcat(Aj, Bj), vcat(Ax, Bx))
 
-    # Build constraints' lower and upper bounds
-    lcon_ = zeros(ncon)
-    ucon_ = zeros(ncon)
-
+    # Constraint bounds: equalities passthrough, inequalities zero (Ax - s = 0),
+    # range upper-rhs equals xu (x + w = xu).
+    lcon_ = zeros(T, ncon); ucon_ = zeros(T, ncon)
     for i in 1:m
         if lcon[i] < ucon[i]
-            # inequality constraints
-            lcon_[i] = 0.0
-            ucon_[i] = 0.0
+            lcon_[i] = zero(T); ucon_[i] = zero(T)
         else
-            # equality constraints
-            lcon_[i] = lcon[i]
-            ucon_[i] = ucon[i]
+            lcon_[i] = lcon[i]; ucon_[i] = ucon[i]
         end
     end
-    for (k, i) in enumerate(ind_rng)
-        lcon_[m + k] = xu[k]
-        ucon_[m + k] = xu[k]
+    for (k, _) in enumerate(ind_rng)
+        lcon_[m + k] = xu[k]; ucon_[m + k] = xu[k]
     end
 
-    lvar_ = [lvar; lcon[ind_ineq]; zeros(nw)]
-    uvar_ = [uvar; ucon[ind_ineq]; fill(Inf, nw)]
-    # The upper bounds in range constraints have been moved in a separate constraint
-    uvar_[ind_rng] .= Inf
-    # Keep fixed variables in the formulation
+    lvar_ = vcat(Vector{T}(lvar), Vector{T}(lcon[ind_ineq]), zeros(T, nw))
+    uvar_ = vcat(Vector{T}(uvar), Vector{T}(ucon[ind_ineq]), fill(T(Inf), nw))
+    # Range upper bounds were moved to dedicated equality rows; keep fixed vars.
+    uvar_[ind_rng] .= T(Inf)
     uvar_[ind_fixed] .= uvar[ind_fixed]
 
-    data = QuadraticModels.QPData(
-        qp.data.c0,
-        [qp.data.c; zeros(ns + nw)],
-        Hs,
-        As,
-    )
+    c_  = vcat(Vector{T}(qp.data.c), zeros(T, ns + nw))
+    x0_ = vcat(Vector{T}(qp.meta.x0), zeros(T, ns + nw))
+    y0_ = vcat(Vector{T}(qp.meta.y0), zeros(T, nw))
+    c0  = @inbounds qp.data.c0[1]
 
-    return QuadraticModels.QuadraticModel(
-        NLPModels.NLPModelMeta(
-            nvar;
-            ncon=ncon,
-            lvar=lvar_,
-            uvar=uvar_,
-            lcon=lcon_,
-            ucon=ucon_,
-            x0=[qp.meta.x0; zeros(ns + nw)],
-            y0=[qp.meta.y0; zeros(nw)],
-            nnzj=qp.meta.nnzj + ns + 2*nw,
-            lin_nnzj=qp.meta.nnzj + ns + 2*nw,
-            lin=[qp.meta.lin; (m+1:m+nw)],
-            nnzh=qp.meta.nnzh,
-            minimize=qp.meta.minimize,
-        ),
-        NLPModels.Counters(),
-        data,
-    )
+    if qp isa QuadraticModel
+        Q_src = operator_sparse_matrix(qp.data.Q)
+        Qi, Qj, Qx = SparseArrays.findnz(Q_src)
+        # Q embeds in the (nvar × nvar) standard space with the original indices.
+        Qs = SparseMatrixCOO(nvar, nvar, Qi, Qj, Vector{T}(Qx))
+        data = QPData(As, c_, Qs;
+            lvar = lvar_, uvar = uvar_, lcon = lcon_, ucon = ucon_, c0 = c0)
+        return QuadraticModel(data; x0 = x0_, y0 = y0_, minimize = qp.meta.minimize, name = qp.meta.name)
+    else
+        data = LPData(As, c_;
+            lvar = lvar_, uvar = uvar_, lcon = lcon_, ucon = ucon_, c0 = c0)
+        return LinearModel(data; x0 = x0_, y0 = y0_, minimize = qp.meta.minimize, name = qp.meta.name)
+    end
 end

@@ -3,7 +3,7 @@ mutable struct Optimizer <: MOI.AbstractOptimizer
     options::Dict{String, Any}
     silent::Bool
     solver::Union{Nothing, MadIPM.MPCSolver}
-    qp::Union{Nothing, QuadraticModel}
+    qp::Union{Nothing, LinearModel, QuadraticModel}
     array_type::Type{<:AbstractVector{Float64}}
     stats::Union{
         Nothing,
@@ -97,8 +97,9 @@ function MOI.copy_to(dest::Optimizer, src::MOI.ModelLike)
     dest.qp, index_map = qp_model(src)
     if dest.array_type != Vector{Float64}
         VT = dest.array_type
-        T = eltype(VT)
-        dest.qp = convert(QuadraticModel{T, VT}, dest.qp)
+        # Strip the eltype off VT and adapt to the underlying backend.
+        backend_array = Base.typename(VT).wrapper
+        dest.qp = Adapt.adapt(backend_array, dest.qp)
     end
     return index_map
 end
