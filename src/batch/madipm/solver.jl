@@ -335,6 +335,12 @@ function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) w
     return
 end
 
+function _termination_callback_hit(batch_solver::AbstractBatchMPCSolver)
+    cb = batch_solver.opt.termination_callback
+    cb === nothing && return false
+    return cb(batch_solver)::Bool
+end
+
 function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
     ws = batch_solver.workspace
     opt = batch_solver.opt
@@ -345,9 +351,10 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
     walltime_hit = time() - bcnt.start_time[] >= opt.max_wall_time
     max_iter_hit = walltime_hit ? false :
         any(ws.status[i] == MadNLP.REGULAR && bcnt.k[i] >= opt.max_iter for i in 1:bs)
+    callback_hit = (!walltime_hit && !max_iter_hit) ? _termination_callback_hit(batch_solver) : false
 
     copyto!(ws._term_cpu, ws._term_gpu)
-    if !walltime_hit && !max_iter_hit
+    if !walltime_hit && !max_iter_hit && !callback_hit
         all(ws._term_cpu[i] == Int_REGULAR for i in 1:bs) && return false
     end
     @inbounds for i in 1:bs
@@ -359,6 +366,8 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
             ws.status[i] = MadNLP.MAXIMUM_ITERATIONS_EXCEEDED
         elseif walltime_hit
             ws.status[i] = MadNLP.MAXIMUM_WALLTIME_EXCEEDED
+        elseif callback_hit
+            ws.status[i] = MadNLP.USER_REQUESTED_STOP
         end
     end
     return true

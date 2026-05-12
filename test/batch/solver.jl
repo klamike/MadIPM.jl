@@ -315,6 +315,14 @@ end
     MadIPM.update_termination_criteria!(bat)
     MadIPM.update_termination_status!(bat)
     @test bat.workspace.status[1] == MadNLP.MAXIMUM_WALLTIME_EXCEEDED
+
+    bat = _build_bat(_qp())
+    seen = Ref(false)
+    bat.opt.termination_callback = solver -> (seen[] = solver === bat; true)
+    MadIPM.update_termination_criteria!(bat)
+    MadIPM.update_termination_status!(bat)
+    @test seen[]
+    @test bat.workspace.status[1] == MadNLP.USER_REQUESTED_STOP
 end
 
 @testset "compute_term_gpu!" begin
