@@ -431,6 +431,13 @@ function update_solution!(stats::BatchExecutionStats, batch_solver::AbstractBatc
     return stats
 end
 
+function update_solution!(stats::BatchSummaryStats, batch_solver::AbstractBatchMPCSolver)
+    stats.status .= batch_solver.workspace.status
+    stats.iter .= batch_solver.batch_cnt.k
+    stats.total_time .= batch_solver.batch_cnt.total_time
+    return stats
+end
+
 function affine_direction!(solver::AbstractBatchMPCSolver)
     set_predictive_rhs!(solver, solver.kkt)
     solve_system!(solver.d, solver, solver.p)
@@ -564,14 +571,17 @@ function mpc!(batch_solver::AbstractBatchMPCSolver)
     end
 end
 
-function solve!(batch_solver::AbstractBatchMPCSolver{T, MT, VT}) where {T, MT, VT}
+function solve!(
+    batch_solver::AbstractBatchMPCSolver{T, MT, VT};
+    fetch_solution::Bool = true,
+) where {T, MT, VT}
     ws = batch_solver.workspace
     bcb = batch_solver.bcb
     bs = batch_solver.batch_size
 
     nvar_nlp = bcb.nlp.meta.nvar
     ncon = bcb.ncon
-    stats = BatchExecutionStats(MT, VT, nvar_nlp, ncon, bs)
+    stats = fetch_solution ? BatchExecutionStats(MT, VT, nvar_nlp, ncon, bs) : BatchSummaryStats(bs)
 
     try
         MadNLP.@notice(batch_solver.logger, "MadIPM batch solve ($bs problems)\n")
