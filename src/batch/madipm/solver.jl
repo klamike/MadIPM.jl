@@ -306,7 +306,7 @@ function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
             ),
         ),
     )
-    minimum!(ws._any_nonregular_gpu, ws._term_gpu)
+    return
 end
 
 function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) where T
@@ -351,12 +351,10 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
     max_iter_hit = walltime_hit ? false :
         any(ws.status[i] == MadNLP.REGULAR && bcnt.k[i] >= opt.max_iter for i in 1:bs)
 
-    if !walltime_hit && !max_iter_hit
-        copyto!(ws._any_nonregular_cpu, ws._any_nonregular_gpu)
-        ws._any_nonregular_cpu[1] == Int_REGULAR && return false
-    end
-
     copyto!(ws._term_cpu, ws._term_gpu)
+    if !walltime_hit && !max_iter_hit
+        all(ws._term_cpu[i] == Int_REGULAR for i in 1:bs) && return false
+    end
     @inbounds for i in 1:bs
         ws.status[i] != MadNLP.REGULAR && continue
         code = MadNLP.Status(ws._term_cpu[i])
@@ -574,6 +572,7 @@ end
 function solve!(
     batch_solver::AbstractBatchMPCSolver{T, MT, VT};
     fetch_solution::Bool = true,
+    initialize::Bool = true,
 ) where {T, MT, VT}
     ws = batch_solver.workspace
     bcb = batch_solver.bcb
@@ -585,7 +584,11 @@ function solve!(
 
     try
         MadNLP.@notice(batch_solver.logger, "MadIPM batch solve ($bs problems)\n")
-        initialize!(batch_solver)
+        if initialize
+            initialize!(batch_solver)
+        else
+            batch_solver.batch_cnt.start_time[] = time()
+        end
         mpc!(batch_solver)
     catch e
         for i in 1:bs

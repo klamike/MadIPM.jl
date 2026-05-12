@@ -383,6 +383,26 @@ end
     @test _s(2) == MadNLP.DIVERGING_ITERATES
 end
 
+@testset "partial batch termination updates active set" begin
+    bat = _build_bat_n(_qp(), 3)
+    ws = bat.workspace
+    fill!(ws.status, MadNLP.REGULAR)
+    fill!(ws._term_gpu, Int(MadNLP.REGULAR))
+    ws._term_gpu[1, 2] = Int(MadNLP.SOLVE_SUCCEEDED)
+
+    @test MadIPM.update_termination_status!(bat)
+    @test ws.status == [
+        MadNLP.REGULAR,
+        MadNLP.SOLVE_SUCCEEDED,
+        MadNLP.REGULAR,
+    ]
+
+    MadIPM.update_active_set!(bat)
+    active = MadIPM.active_view(bat.batch_views)
+    @test MadIPM.local_batch_size(active) == 2
+    @test active.local_to_root[1:2] == Int32[1, 3]
+end
+
 @testset "structure mismatch" begin
     qp1 = QuadraticModel([1.0,1.0], [1,2], [1,2], [2.0,2.0];
         Arows=[1,1], Acols=[1,2], Avals=[1.0,1.0],
