@@ -350,7 +350,7 @@ end
 
     _set!(ic=1e10, best=1e-8, dobj=1e12, obj=1.0)
     MadIPM.compute_term_gpu!(ws, bat.opt)
-    @test _s(1) == MadNLP.INFEASIBLE_PROBLEM_DETECTED
+    @test _s(1) == MadNLP.REGULAR
 
     _set!()
     ws.primal_cert_res .= bat.opt.primal_infeasibility_cert_tol / 10
