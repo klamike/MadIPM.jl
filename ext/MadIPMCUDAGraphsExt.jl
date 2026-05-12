@@ -62,26 +62,6 @@ CUDAGraphs.@graphbreak function MadIPM.solve_active!(
     return
 end
 
-CUDAGraphs.@graphbreak function _factorize_system!(batch_solver)
-    MadIPM.factorize_system!(batch_solver)
-    return
-end
-
-CUDAGraphs.@graphbreak function _prediction_step!(batch_solver)
-    MadIPM.prediction_step!(batch_solver)
-    return
-end
-
-CUDAGraphs.@graphbreak function _mehrotra_correction_direction!(batch_solver)
-    MadIPM.mehrotra_correction_direction!(batch_solver)
-    return
-end
-
-CUDAGraphs.@graphbreak function _evaluate_model!(batch_solver)
-    MadIPM.evaluate_model!(batch_solver)
-    return
-end
-
 function MadIPM.mpc_step!(
     batch_solver::MadIPM.UniformBatchMPCSolver{T,MT,VT},
 ) where {T,MT<:CuMatrix{T},VT}
@@ -92,14 +72,7 @@ function MadIPM.mpc_step!(
         _SEG_CACHE_NA[] = na
     end
     CUDAGraphs.@unsafe_scaptured cache begin
-        fill!(batch_solver.workspace._ls_error, zero(Int32))
-        _factorize_system!(batch_solver)
-        _prediction_step!(batch_solver)
-        _mehrotra_correction_direction!(batch_solver)
-        MadIPM.update_step!(batch_solver.opt.step_rule, batch_solver)
-        MadIPM.zero_inactive_step!(batch_solver)
-        MadIPM.apply_step!(batch_solver)
-        _evaluate_model!(batch_solver)
+        invoke(MadIPM.mpc_step!, Tuple{MadIPM.AbstractBatchMPCSolver}, batch_solver)
     end
     return
 end
