@@ -372,6 +372,9 @@ function solve_system!(
     copyto!(MadNLP.full(d), MadNLP.full(p))
     MadNLP.solve_kkt!(batch_solver.kkt, batch_solver)
 
+    opt = batch_solver.opt
+    opt.check_residual || return d
+
     w = batch_solver._w1
     copyto!(MadNLP.full(w), MadNLP.full(p))
     mul!(w, batch_solver.kkt, d, -one(T), one(T))
@@ -380,8 +383,6 @@ function solve_system!(
     MadNLP.full(w) .*= ws.active_mask
     MadNLP.full(p) .*= ws.active_mask
 
-    opt = batch_solver.opt
-    check_res = opt.check_residual
     tol_ls = T(opt.tol_linear_solve)
     _fw = MadNLP.full(w)
     _fw .= abs.(_fw)
@@ -389,7 +390,7 @@ function solve_system!(
     _fw .= abs.(MadNLP.full(p))
     batch_maximum!(ws._norm_gpu_p, _fw)                  # (1,bs) per-instance norm_p
     @. ws._norm_gpu_w /= max(one(T), ws._norm_gpu_p)    # ratio in-place
-    @. ws._ls_error |= isnan(ws._norm_gpu_w) | (check_res & (ws._norm_gpu_w > tol_ls))
+    @. ws._ls_error |= isnan(ws._norm_gpu_w) | (ws._norm_gpu_w > tol_ls)
     return d
 end
 
