@@ -16,6 +16,7 @@ SparseMatricesCOO = "fa32481b-f100-4b48-8dc8-c62f61b13870"
 
 [weakdeps]
 Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
+BatchOptInterface = "75110529-b25f-4ac5-b01f-d734aa829793"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
@@ -23,15 +24,18 @@ MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
 MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 
 [sources]
-BatchQuadraticModels = {rev = "mk/single", url = "https://github.com/klamike/BatchQuadraticModels.jl.git"}
+BatchOptInterface = {path = "../BatchOptInterface.jl"}
+BatchQuadraticModels = {path = "../BatchQuadraticModels.jl"}
 
 [extensions]
+MadIPMBatchOptInterfaceExt = ["BatchOptInterface", "MathOptInterface"]
 MadIPMCUDAExt = ["Atomix", "CUDA", "CUDSS", "KernelAbstractions", "MadNLPGPU"]
 MadIPMMathOptInterfaceExt = "MathOptInterface"
 
 [compat]
 Adapt = "4"
 Atomix = "1"
+BatchOptInterface = "0.1"
 BatchQuadraticModels = "0.1"
 CUDA = "5.4.0"
 CUDSS = "0.6"
@@ -51,6 +55,7 @@ julia = "1.10"
 
 [extras]
 Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
+BatchOptInterface = "75110529-b25f-4ac5-b01f-d734aa829793"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
@@ -60,4 +65,4 @@ MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Atomix", "CUDA", "CUDSS", "KernelAbstractions", "MadNLPTests", "MadNLPGPU", "MathOptInterface", "Test"]
+test = ["Atomix", "BatchOptInterface", "CUDA", "CUDSS", "KernelAbstractions", "MadNLPTests", "MadNLPGPU", "MathOptInterface", "Test"]

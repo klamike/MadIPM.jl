@@ -26,9 +26,6 @@ const MOI = MathOptInterface
 include("parse_moi.jl")
 include("MOI_wrapper.jl")
 
-function __init__()
-    @eval MadIPM const Optimizer = $Optimizer
-end
+MadIPM.Optimizer() = Optimizer()
 
 end
-

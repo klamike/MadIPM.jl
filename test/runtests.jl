@@ -264,6 +264,7 @@ end
 #     include("MOI_wrapper.jl")
 # end
 
+include("batch_optimizer.jl")
 include("batch/views.jl")
 include("batch/solver.jl")
 

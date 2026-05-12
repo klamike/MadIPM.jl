@@ -44,7 +44,10 @@ include("batch/madnlp/nlpmodels.jl")
 include("batch/madipm/kernels.jl")
 include("batch/madipm/solver.jl")
 
-export MPCSolver, madipm, madipm_batch
+function BatchOptimizer end
+function Optimizer end
+
+export MPCSolver, BatchOptimizer, Optimizer, madipm, madipm_batch
 
 MadNLP.madsuite(::Val{:madipm}, args...; kwargs...) = madipm(args...; kwargs...)
 
