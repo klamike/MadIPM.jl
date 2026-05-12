@@ -293,14 +293,9 @@ function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
                     (ws.dual_cert_margin > dcert_tol),
                     Int_DIVERGING,
                     ifelse(
-                        (ws.inf_compl > div_tol * ws.best_complementarity) &
-                        (ws.dual_obj > max(ds * abs(ws.obj_val), one(T))),
-                        Int_INFEASIBLE,
-                        ifelse(
-                            ws.obj_val < -(div_tol * max(ds * abs(ws.dual_obj), one(T))),
-                            Int_DIVERGING,
-                            Int_REGULAR,
-                        ),
+                        ws.obj_val < -(div_tol * max(ds * abs(ws.dual_obj), one(T))),
+                        Int_DIVERGING,
+                        Int_REGULAR,
                     ),
                 ),
             ),

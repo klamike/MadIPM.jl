@@ -210,9 +210,6 @@ function update_termination_criteria!(solver::MadNLP.AbstractMadNLPSolver)
         solver.status = MadNLP.INFEASIBLE_PROBLEM_DETECTED
     elseif has_dual_infeasibility_certificate(solver)
         solver.status = MadNLP.DIVERGING_ITERATES  # TODO: MadNLP.UNBOUNDED_PROBLEM_DETECTED?
-    elseif ((solver.inf_compl > solver.opt.divergence_tol * solver.best_complementarity) &&
-            (dobj > max(solver.opt.divergence_scale * abs(solver.obj_val), 1.0)))
-        solver.status = MadNLP.INFEASIBLE_PROBLEM_DETECTED
     elseif solver.obj_val < - solver.opt.divergence_tol * max(solver.opt.divergence_scale * abs(dobj), 1.0)
         solver.status = MadNLP.DIVERGING_ITERATES
     elseif solver.cnt.k >= solver.opt.max_iter
