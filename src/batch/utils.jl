@@ -118,6 +118,20 @@ mutable struct BatchExecutionStats{T, VT<:AbstractVector{T}, MT<:AbstractMatrix{
     total_time::Vector{Float64}    # (bs,)
 end
 
+struct BatchSummaryStats
+    status::Vector{MadNLP.Status}
+    iter::Vector{Int}
+    total_time::Vector{Float64}
+end
+
+function BatchSummaryStats(batch_size::Int)
+    return BatchSummaryStats(
+        fill(MadNLP.INITIAL, batch_size),
+        zeros(Int, batch_size),
+        zeros(Float64, batch_size),
+    )
+end
+
 function BatchExecutionStats(::Type{MT}, ::Type{VT}, nvar_nlp::Int, ncon::Int, batch_size::Int) where {T, MT<:AbstractMatrix{T}, VT<:AbstractVector{T}}
     return BatchExecutionStats{T, VT, MT}(
         fill(MadNLP.INITIAL, batch_size),

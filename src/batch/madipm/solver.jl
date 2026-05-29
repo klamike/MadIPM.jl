@@ -245,6 +245,11 @@ function initialize_solver_state!(batch_solver::AbstractBatchMPCSolver{T}) where
     fill!(ws.inf_du, zero(T))
     fill!(ws.inf_compl, zero(T))
     fill!(ws.dual_obj, zero(T))
+    fill!(ws.primal_cert_res, typemax(T))
+    fill!(ws.primal_cert_margin, -typemax(T))
+    fill!(ws.dual_cert_res, typemax(T))
+    fill!(ws.dual_cert_bound, typemax(T))
+    fill!(ws.dual_cert_margin, -typemax(T))
     fill!(ws.alpha_p, zero(T))
     fill!(ws.alpha_d, zero(T))
     t_now = time()
@@ -267,6 +272,9 @@ function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
     Int_INFEASIBLE = Int(MadNLP.INFEASIBLE_PROBLEM_DETECTED)
     Int_DIVERGING = Int(MadNLP.DIVERGING_ITERATES)
     Int_REGULAR = Int(MadNLP.REGULAR)
+    cert_enabled = opt.certificate_termination
+    pcert_tol = T(opt.primal_infeasibility_cert_tol)
+    dcert_tol = T(opt.dual_infeasibility_cert_tol)
     @. ws._term_gpu = ifelse(
         ws._ls_error > zero(Int32),
         Int_ERROR,
@@ -274,18 +282,26 @@ function compute_term_gpu!(ws::UniformBatchWorkspace{T}, opt) where T
             max(ws.inf_pr, ws.inf_du, ws.inf_compl) <= tol,
             Int_SOLVED,
             ifelse(
-                (ws.inf_compl > div_tol * ws.best_complementarity) &
-                (ws.dual_obj > max(ds * abs(ws.obj_val), one(T))),
+                cert_enabled &
+                (ws.primal_cert_res <= pcert_tol) &
+                (ws.primal_cert_margin > pcert_tol),
                 Int_INFEASIBLE,
                 ifelse(
-                    ws.obj_val < -(div_tol * max(ds * abs(ws.dual_obj), one(T))),
+                    cert_enabled &
+                    (ws.dual_cert_res <= dcert_tol) &
+                    (ws.dual_cert_bound <= dcert_tol) &
+                    (ws.dual_cert_margin > dcert_tol),
                     Int_DIVERGING,
-                    Int_REGULAR,
+                    ifelse(
+                        ws.obj_val < -(div_tol * max(ds * abs(ws.dual_obj), one(T))),
+                        Int_DIVERGING,
+                        Int_REGULAR,
+                    ),
                 ),
             ),
         ),
     )
-    minimum!(ws._any_nonregular_gpu, ws._term_gpu)
+    return
 end
 
 function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) where T
@@ -313,8 +329,16 @@ function update_termination_criteria!(batch_solver::AbstractBatchMPCSolver{T}) w
         lower(zl), lower(xl), upper(zu), upper(xu),
         ws.sum_lb, ws.sum_ub, nlb, nub)
 
+    update_primal_infeasibility_certificate!(batch_solver)
+    update_dual_infeasibility_certificate!(batch_solver)
     compute_term_gpu!(ws, opt)
     return
+end
+
+function _termination_callback_hit(batch_solver::AbstractBatchMPCSolver)
+    cb = batch_solver.opt.termination_callback
+    cb === nothing && return false
+    return cb(batch_solver)::Bool
 end
 
 function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
@@ -327,13 +351,12 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
     walltime_hit = time() - bcnt.start_time[] >= opt.max_wall_time
     max_iter_hit = walltime_hit ? false :
         any(ws.status[i] == MadNLP.REGULAR && bcnt.k[i] >= opt.max_iter for i in 1:bs)
-
-    if !walltime_hit && !max_iter_hit
-        copyto!(ws._any_nonregular_cpu, ws._any_nonregular_gpu)
-        ws._any_nonregular_cpu[1] == Int_REGULAR && return false
-    end
+    callback_hit = (!walltime_hit && !max_iter_hit) ? _termination_callback_hit(batch_solver) : false
 
     copyto!(ws._term_cpu, ws._term_gpu)
+    if !walltime_hit && !max_iter_hit && !callback_hit
+        all(ws._term_cpu[i] == Int_REGULAR for i in 1:bs) && return false
+    end
     @inbounds for i in 1:bs
         ws.status[i] != MadNLP.REGULAR && continue
         code = MadNLP.Status(ws._term_cpu[i])
@@ -343,6 +366,8 @@ function update_termination_status!(batch_solver::AbstractBatchMPCSolver)
             ws.status[i] = MadNLP.MAXIMUM_ITERATIONS_EXCEEDED
         elseif walltime_hit
             ws.status[i] = MadNLP.MAXIMUM_WALLTIME_EXCEEDED
+        elseif callback_hit
+            ws.status[i] = MadNLP.USER_REQUESTED_STOP
         end
     end
     return true
@@ -356,6 +381,9 @@ function solve_system!(
     copyto!(MadNLP.full(d), MadNLP.full(p))
     MadNLP.solve_kkt!(batch_solver.kkt, batch_solver)
 
+    opt = batch_solver.opt
+    opt.check_residual || return d
+
     w = batch_solver._w1
     copyto!(MadNLP.full(w), MadNLP.full(p))
     mul!(w, batch_solver.kkt, d, -one(T), one(T))
@@ -364,8 +392,6 @@ function solve_system!(
     MadNLP.full(w) .*= ws.active_mask
     MadNLP.full(p) .*= ws.active_mask
 
-    opt = batch_solver.opt
-    check_res = opt.check_residual
     tol_ls = T(opt.tol_linear_solve)
     _fw = MadNLP.full(w)
     _fw .= abs.(_fw)
@@ -373,7 +399,7 @@ function solve_system!(
     _fw .= abs.(MadNLP.full(p))
     batch_maximum!(ws._norm_gpu_p, _fw)                  # (1,bs) per-instance norm_p
     @. ws._norm_gpu_w /= max(one(T), ws._norm_gpu_p)    # ratio in-place
-    @. ws._ls_error |= isnan(ws._norm_gpu_w) | (check_res & (ws._norm_gpu_w > tol_ls))
+    @. ws._ls_error |= isnan(ws._norm_gpu_w) | (ws._norm_gpu_w > tol_ls)
     return d
 end
 
@@ -404,6 +430,13 @@ function update_solution!(stats::BatchExecutionStats, batch_solver::AbstractBatc
 
     stats.dual_feas .= vec(ws.inf_du)
     stats.primal_feas .= vec(ws.inf_pr)
+    stats.total_time .= batch_solver.batch_cnt.total_time
+    return stats
+end
+
+function update_solution!(stats::BatchSummaryStats, batch_solver::AbstractBatchMPCSolver)
+    stats.status .= batch_solver.workspace.status
+    stats.iter .= batch_solver.batch_cnt.k
     stats.total_time .= batch_solver.batch_cnt.total_time
     return stats
 end
@@ -541,18 +574,26 @@ function mpc!(batch_solver::AbstractBatchMPCSolver)
     end
 end
 
-function solve!(batch_solver::AbstractBatchMPCSolver{T, MT, VT}) where {T, MT, VT}
+function solve!(
+    batch_solver::AbstractBatchMPCSolver{T, MT, VT};
+    fetch_solution::Bool = true,
+    initialize::Bool = true,
+) where {T, MT, VT}
     ws = batch_solver.workspace
     bcb = batch_solver.bcb
     bs = batch_solver.batch_size
 
     nvar_nlp = bcb.nlp.meta.nvar
     ncon = bcb.ncon
-    stats = BatchExecutionStats(MT, VT, nvar_nlp, ncon, bs)
+    stats = fetch_solution ? BatchExecutionStats(MT, VT, nvar_nlp, ncon, bs) : BatchSummaryStats(bs)
 
     try
         MadNLP.@notice(batch_solver.logger, "MadIPM batch solve ($bs problems)\n")
-        initialize!(batch_solver)
+        if initialize
+            initialize!(batch_solver)
+        else
+            batch_solver.batch_cnt.start_time[] = time()
+        end
         mpc!(batch_solver)
     catch e
         for i in 1:bs

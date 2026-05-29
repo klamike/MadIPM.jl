@@ -415,6 +415,90 @@ function dual_objective(solver::MPCSolver)
     return dobj
 end
 
+function _finite_norm_inf(v)
+    T = eltype(v)
+    return mapreduce(x -> isfinite(x) ? abs(x) : zero(T), max, v; init = zero(T))
+end
+
+function _certificate_data_norm(solver::MPCSolver{T}) where {T}
+    return max(
+        one(T),
+        norm(solver.rhs, Inf),
+        _finite_norm_inf(solver.xl_r),
+        _finite_norm_inf(solver.xu_r),
+    )
+end
+
+function _dual_certificate_norm(solver::MPCSolver{T}) where {T}
+    return max(
+        one(T),
+        norm(solver.y, Inf),
+        norm(solver.zl_r, Inf),
+        norm(solver.zu_r, Inf),
+    )
+end
+
+function primal_infeasibility_certificate(solver::MPCSolver{T}) where {T}
+    cert_norm = _dual_certificate_norm(solver)
+    data_norm = _certificate_data_norm(solver)
+    residual = MadNLP.primal(solver._w2)
+    copyto!(residual, solver.jacl)
+    residual .-= MadNLP.full(solver.zl)
+    residual .+= MadNLP.full(solver.zu)
+    cert_res = norm(residual, Inf) / cert_norm
+    cert_margin = dual_objective(solver) / (cert_norm * data_norm)
+    return cert_res, cert_margin
+end
+
+function has_primal_infeasibility_certificate(solver::MPCSolver)
+    solver.opt.certificate_termination || return false
+    cert_res, cert_margin = primal_infeasibility_certificate(solver)
+    tol = solver.opt.primal_infeasibility_cert_tol
+    return isfinite(cert_res) && isfinite(cert_margin) &&
+           cert_res <= tol && cert_margin > tol
+end
+
+function _primal_ray_bound_violation(solver::MPCSolver{T}, ray_norm::T) where {T}
+    x = MadNLP.primal(solver.x)
+    violation = zero(T)
+    @inbounds for i in eachindex(solver.x_lr)
+        isfinite(solver.xl_r[i]) || continue
+        violation = max(violation, max(zero(T), -x[solver.ind_lb[i]] / ray_norm))
+    end
+    @inbounds for i in eachindex(solver.x_ur)
+        isfinite(solver.xu_r[i]) || continue
+        violation = max(violation, max(zero(T), x[solver.ind_ub[i]] / ray_norm))
+    end
+    return violation
+end
+
+function dual_infeasibility_certificate(solver::MPCSolver{T}) where {T}
+    # For QPs, a primal ray also needs a Hessian curvature check; keep the
+    # existing divergence fallback until that certificate is available.
+    solver.class isa LinearProgram || return T(Inf), T(Inf), -T(Inf)
+    x = MadNLP.primal(solver.x)
+    ray_norm = max(one(T), norm(x, Inf))
+
+    lhs = MadNLP.dual(solver._w2)
+    copyto!(lhs, solver.c)
+    lhs .+= solver.rhs
+    cert_res = norm(lhs, Inf) / ray_norm
+    bound_violation = _primal_ray_bound_violation(solver, ray_norm)
+
+    obj_ray = dot(MadNLP.primal(solver.f), x) / ray_norm
+    obj_norm = max(one(T), norm(MadNLP.primal(solver.f), Inf))
+    cert_margin = -obj_ray / obj_norm
+    return cert_res, bound_violation, cert_margin
+end
+
+function has_dual_infeasibility_certificate(solver::MPCSolver)
+    solver.opt.certificate_termination || return false
+    cert_res, bound_violation, cert_margin = dual_infeasibility_certificate(solver)
+    tol = solver.opt.dual_infeasibility_cert_tol
+    return isfinite(cert_res) && isfinite(bound_violation) && isfinite(cert_margin) &&
+           cert_res <= tol && bound_violation <= tol && cert_margin > tol
+end
+
 function get_optimality_gap(solver::MPCSolver)
     return MadNLP.get_inf_compl(
         solver.x_lr,
