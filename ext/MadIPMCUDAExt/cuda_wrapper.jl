@@ -139,11 +139,25 @@ end
 
 MadIPM.is_factorized(::CUDSSSolver) = true
 
-function MadIPM.factorize_active!(s::CUDSSSolver, active::MadIPM.BatchView)
-    na = MadIPM.local_batch_size(active)
+# the mask is copied to the device synchronously, so it is only set again
+# when the set of active instances changes
+const _MASK = WeakKeyDict{Any, Vector{Cint}}()   # weak: dropped with the solver
+function _set_ubatch_mask!(s::CUDSSSolver, active::MadIPM.BatchView)
     nb = s.inner.matrix.nbatch
-    # the active instances are compacted into the first na slots
-    nb > 1 && CUDSS.cudss_set(s.inner, "ubatch_mask", Cint[i <= na for i in 1:nb])
+    mask = zeros(Cint, nb)
+    @inbounds for j in 1:MadIPM.local_batch_size(active)
+        mask[active.local_to_root[j]] = Cint(1)
+    end
+    get(_MASK, s, Cint[]) == mask && return
+    CUDSS.cudss_set(s.inner, "ubatch_mask", mask)
+    _MASK[s] = mask
+    return
+end
+
+function MadIPM.factorize_active!(s::CUDSSSolver, active::MadIPM.BatchView)
+    nb = s.inner.matrix.nbatch
+    # the instances keep their slots; the mask switches off the inactive ones
+    nb > 1 && _set_ubatch_mask!(s, active)
     MadNLP.factorize!(s)
     return
 end

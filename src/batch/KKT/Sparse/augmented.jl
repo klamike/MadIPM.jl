@@ -5,7 +5,6 @@ struct SparseUniformBatchKKTSystem{T,LS,MT,VI,VI32,OPT,BVS} <: AbstractBatchKKTS
     aug_J::VI32             # shared column indices
     batch_solver::LS        # batched linear solver
     rhs_buffer::MT          # (n+m) × batch_size for batch solve
-    compact_buffer::MT      # scratch for GPU compact (max(nnz_csc, n+m) × batch_size)
     batch_size::Int
     batch_views::BVS
     aug_com_nzvals::MT      # (nnz_csc × batch_size) CSC nonzero values
@@ -121,7 +120,6 @@ function MadNLP.create_kkt_system(
     LS = typeof(batch_ls)
     VI32 = typeof(I)
     OPT = typeof(jt_op)
-    compact_buffer = similar(nzVals, max(nnz_csc, aug_vec_length), batch_size)
 
     return SparseUniformBatchKKTSystem{T,LS,MT,VI,VI32,OPT,typeof(batch_views)}(
         nzVals,
@@ -129,7 +127,6 @@ function MadNLP.create_kkt_system(
         J,
         batch_ls,
         rhs_buffer,
-        compact_buffer,
         batch_size,
         batch_views,
         aug_com_nzvals,
@@ -150,13 +147,6 @@ end
 
 function MadNLP.factorize_kkt!(bkkt::SparseUniformBatchKKTSystem)
     factor_view = active_view(bkkt.batch_views)
-    if !is_identity_view(factor_view)
-        compact_active_columns_inplace!(
-            bkkt.aug_com_nzvals,
-            factor_view,
-            bkkt.compact_buffer,
-        )
-    end
     factorize_active!(bkkt.batch_solver, factor_view)
     return
 end
@@ -166,9 +156,6 @@ function MadNLP.solve_linear_system!(
     rhs::AbstractMatrix,
 ) where {T}
     active = active_view(bkkt.batch_views)
-    if !is_identity_view(active)
-        compact_active_columns_inplace!(rhs, active, bkkt.compact_buffer)
-    end
     solve_active!(bkkt.batch_solver, rhs, active)
     return rhs
 end
@@ -261,14 +248,9 @@ function MadNLP.solve_kkt!(
 
     rhs = bkkt.rhs_buffer
     pd_view = MadNLP.primal_dual(d)
-    active = active_view(bkkt.batch_views)
     copyto!(rhs, pd_view)
     MadNLP.solve_linear_system!(bkkt, rhs)
-    if is_identity_view(active)
-        copyto!(pd_view, rhs)
-    else
-        scatter_batch_view_columns!(pd_view, rhs, active)
-    end
+    copyto!(pd_view, rhs)
 
     MadNLP.finish_aug_solve!(bkkt, batch_solver)
     return

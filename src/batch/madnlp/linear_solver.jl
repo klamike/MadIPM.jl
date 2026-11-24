@@ -38,7 +38,7 @@ function is_factorized!(
 )
     nfailed = 0
     @inbounds for j = 1:factor_view.n
-        if !is_factorized(batch_linear_solver.solvers[j])
+        if !is_factorized(batch_linear_solver.solvers[factor_view.local_to_root[j]])
             nfailed += 1
             failed_local_buffer[nfailed] = j
         end
@@ -48,7 +48,7 @@ end
 
 function factorize_active!(s::LoopedBatchLinearSolver, factor_view::BatchView)
     @inbounds for j = 1:factor_view.n
-        MadNLP.factorize!(s.solvers[j])
+        MadNLP.factorize!(s.solvers[factor_view.local_to_root[j]])
     end
     return
 end
@@ -61,9 +61,11 @@ function solve_active!(
     na = local_batch_size(active)
     na == 0 && return
     n = size(rhs, 1)
+    # instances keep their columns: the active ones are not compacted
     @inbounds for j = 1:na
-        rhs_j = _madnlp_unsafe_column_wrap(rhs, n, (j - 1) * n + 1, VT)
-        MadNLP.solve_linear_system!(s.solvers[j], rhs_j)
+        r = Int(active.local_to_root[j])
+        rhs_j = _madnlp_unsafe_column_wrap(rhs, n, (r - 1) * n + 1, VT)
+        MadNLP.solve_linear_system!(s.solvers[r], rhs_j)
     end
     return
 end

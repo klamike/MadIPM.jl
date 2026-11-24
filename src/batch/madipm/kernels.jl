@@ -232,13 +232,10 @@ function _set_aug_diagonal_reg_masked!(kkt, solver::AbstractBatchMPCSolver)
     return
 end
 
-function set_aug_diagonal_reg!(kkt, solver::AbstractBatchMPCSolver)
-    if is_identity_view(active_view(solver.batch_views))
-        _set_aug_diagonal_reg_unmasked!(kkt, solver)
-    else
-        _set_aug_diagonal_reg_masked!(kkt, solver)
-    end
-end
+# the masked update is also correct when every instance is active; using it
+# always keeps the launched kernels independent of the active set
+set_aug_diagonal_reg!(kkt, solver::AbstractBatchMPCSolver) =
+    _set_aug_diagonal_reg_masked!(kkt, solver)
 
 function get_complementarity_measure!(solver::AbstractBatchMPCSolver)
     ws = solver.workspace
