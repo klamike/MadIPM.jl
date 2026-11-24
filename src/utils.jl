@@ -111,6 +111,9 @@ end
     # Linear solve
     tol_linear_solve::Float64 = 1e-8
     check_residual::Bool = false
+    # GPU: replay each iteration of the uniform batch solver as a CUDA graph
+    # (CUDA extension; see MadIPMCUDAExt/cuda_graph.jl for the restrictions)
+    cuda_graph::Bool = false
 end
 
 # smart option presets

@@ -70,3 +70,28 @@ function solve_active!(
     return
 end
 is_factorized!(::Vector{Int32}, ::MadNLP.AbstractLinearSolver, ::BatchView) = 0
+
+"""
+    graph_capturable(batch_linear_solver)
+
+Whether a refactorization and the solves of the uniform-batch linear solver
+can be recorded into a CUDA graph and replayed (no host synchronization or
+allocation, every call on the current stream or recorded otherwise).
+"""
+graph_capturable(::Any) = false
+
+"""
+    prepare_active!(batch_linear_solver, active::BatchView)
+
+Host-side preparation of the next factorization for the active members (e.g.
+a mask that skips the finished ones), done before an iteration is replayed.
+"""
+prepare_active!(::Any, ::BatchView) = nothing
+
+"""
+    recording_key(batch_linear_solver)
+
+A value that changes whenever a recorded iteration of the solver must be
+recorded again (e.g. the mask of the active members, fixed in a recording).
+"""
+recording_key(::Any) = nothing

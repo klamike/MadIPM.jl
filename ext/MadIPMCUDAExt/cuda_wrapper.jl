@@ -138,17 +138,40 @@ function CUDSSSolver(
 end
 
 MadIPM.is_factorized(::CUDSSSolver) = true
+# a pivoted (Bunch-Kaufman) cuDSS factorization cannot be recorded
+MadIPM.graph_capturable(s::CUDSSSolver) = !s.opt.cudss_pivoting
+MadIPM.recording_key(s::CUDSSSolver) = copy(get(_MASK, s, Cint[]))
+# graph mode sets the mask before each replay, keeping a superset of the
+# active instances for as long as MASK_REFRESH allows
+MadIPM.prepare_active!(s::CUDSSSolver, active::MadIPM.BatchView) =
+    s.inner.matrix.nbatch > 1 && _set_ubatch_mask!(s, active; keep_superset = true)
 
 # the mask is copied to the device synchronously, so it is only set again
-# when the set of active instances changes
+# when the set of active instances changes, and never while an iteration is
+# recorded (graph mode sets it in prepare_active!, before the recording)
 const _MASK = WeakKeyDict{Any, Vector{Cint}}()   # weak: dropped with the solver
-function _set_ubatch_mask!(s::CUDSSSolver, active::MadIPM.BatchView)
+const GRAPH_FULL_MASK = Ref(false)   # graph mode: keep the mask all-ones
+const MASK_REFRESH = Ref(0.25)       # graph mode: fraction of finished instances that triggers a new mask
+function _set_ubatch_mask!(s::CUDSSSolver, active::MadIPM.BatchView; keep_superset::Bool = false)
     nb = s.inner.matrix.nbatch
     mask = zeros(Cint, nb)
-    @inbounds for j in 1:MadIPM.local_batch_size(active)
-        mask[active.local_to_root[j]] = Cint(1)
+    if GRAPH_FULL_MASK[]
+        fill!(mask, Cint(1))
+    else
+        @inbounds for j in 1:MadIPM.local_batch_size(active)
+            mask[active.local_to_root[j]] = Cint(1)
+        end
     end
-    get(_MASK, s, Cint[]) == mask && return
+    old = get(_MASK, s, Cint[])
+    old == mask && return
+    # in graph mode a new mask means recording the iteration again: keep the
+    # current mask (a superset of the active instances) until enough of the
+    # instances it covers have finished
+    if keep_superset && length(old) == nb
+        covered = count(!iszero, old)
+        all(i -> !iszero(mask[i]) <= !iszero(old[i]), 1:nb) &&
+            (covered - count(!iszero, mask)) < MASK_REFRESH[] * covered && return
+    end
     CUDSS.cudss_set(s.inner, "ubatch_mask", mask)
     _MASK[s] = mask
     return
@@ -157,16 +180,18 @@ end
 function MadIPM.factorize_active!(s::CUDSSSolver, active::MadIPM.BatchView)
     nb = s.inner.matrix.nbatch
     # the instances keep their slots; the mask switches off the inactive ones
-    nb > 1 && _set_ubatch_mask!(s, active)
-    MadNLP.factorize!(s)
+    nb > 1 && !CUDA.CUDACore.is_capturing() && _set_ubatch_mask!(s, active)
+    _cudss_call!(() -> MadNLP.factorize!(s))
     return
 end
 
 function MadIPM.solve_active!(s::CUDSSSolver{T}, rhs::CuMatrix{T}, active::MadIPM.BatchView) where T
     # solve over the whole batch: ubatch_mask (set in factorize_active!)
     # leaves the columns of the inactive instances unchanged
-    CUDSS.cudss_update(s.b_gpu, rhs)
-    CUDSS.cudss_update(s.x_gpu, rhs)
-    CUDSS.cudss("solve", s.inner, s.x_gpu, s.b_gpu, asynchronous=s.opt.cudss_asynchronous)
+    _cudss_call!() do
+        CUDSS.cudss_update(s.b_gpu, rhs)
+        CUDSS.cudss_update(s.x_gpu, rhs)
+        CUDSS.cudss("solve", s.inner, s.x_gpu, s.b_gpu, asynchronous=s.opt.cudss_asynchronous)
+    end
     return
 end
