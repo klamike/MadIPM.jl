@@ -361,6 +361,7 @@ end
 
 function MadIPM._reduce_rhs_batch!(values::CuMatrix, ind_lb, lb_off, l_diag,
                                                       ind_ub, ub_off, u_diag)
+    FUSED_AUG[] && return _fused_reduce_rhs!(values, ind_lb, lb_off, l_diag, ind_ub, ub_off, u_diag)
     bs = size(values, 2); backend = CUDABackend()
     nlb = length(ind_lb)
     nlb > 0 && _reduce_rhs_lb_kernel!(backend)(values, ind_lb, lb_off, l_diag; ndrange=(nlb, bs))
@@ -381,6 +382,7 @@ end
 
 function MadIPM._finish_aug_solve_batch!(values::CuMatrix, ind_lb, lb_off, l_lower, l_diag,
                                                             ind_ub, ub_off, u_lower, u_diag)
+    FUSED_AUG[] && return _fused_finish_aug!(values, ind_lb, lb_off, l_lower, l_diag, ind_ub, ub_off, u_lower, u_diag)
     bs = size(values, 2); backend = CUDABackend()
     nlb = length(ind_lb)
     nlb > 0 && _finish_aug_solve_lb_kernel!(backend)(values, ind_lb, lb_off, l_lower, l_diag; ndrange=(nlb, bs))

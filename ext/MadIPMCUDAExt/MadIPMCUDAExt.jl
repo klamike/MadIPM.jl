@@ -45,6 +45,7 @@ include("models/scaling.jl")
 include("cuda_wrapper.jl")
 include("cuda_graph.jl")
 include("cuda_batch_kernels.jl")
+include("cuda_fused.jl")
 
 function MadIPM._csc_with_nzval(A::CUSPARSE.CuSparseMatrixCSC, nzval, n)
     return CUSPARSE.CuSparseMatrixCSC(A.colPtr, A.rowVal, nzval, (n, n))
