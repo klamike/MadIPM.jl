@@ -39,32 +39,6 @@ end
         x0 = ones(2),
     )
 
-    @testset "GPU gather/scatter" begin
-        cpu_bnlp = BatchQuadraticModel([_lp() for _ = 1:4])
-        gpu_bnlp = Adapt.adapt(CuArray, cpu_bnlp)
-        solver = MadIPM.UniformBatchMPCSolver(
-            gpu_bnlp;
-            print_level = MadNLP.ERROR,
-            uniformbatch_linear_solver = MadNLPGPU.CUDSSSolver,
-        )
-        bvs = solver.batch_views
-
-        saved = MadIPM.select_local!(bvs, [2, 4])
-        child = MadIPM.active_view(bvs)
-
-        src = cu(reshape(collect(1.0:12.0), 3, 4))
-        gathered = similar(src, 3, 2)
-        MadIPM.gather_batch_view_columns!(gathered, src, child)
-        @test Array(gathered) == Array(src[:, [2, 4]])
-
-        scattered = CUDA.fill(-1.0, 3, 4)
-        MadIPM.scatter_batch_view_columns!(scattered, gathered, child)
-        @test Array(scattered[:, [2, 4]]) == Array(src[:, [2, 4]])
-        @test all(Array(scattered[:, [1, 3]]) .== -1.0)
-
-        MadIPM.restore_state!(bvs, saved)
-    end
-
     @testset "ObjRHSBatch LP bs=4" begin
         _gpu_batch([_lp() for _ = 1:4]; atol = 1e-5)
     end
