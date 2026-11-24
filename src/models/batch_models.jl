@@ -201,9 +201,14 @@ function NLPModels.obj!(
     bx::AbstractMatrix,
     bf::AbstractVector,
 ) where {T}
-    bqp._HX .= bqp.c_batch
-    mul!(bqp._HX, bqp.Q, bx, T(0.5), one(T))
-    batch_mapreduce!(*,+,zero(T),reshape(bf, 1, length(bf)),bqp._HX,bx)
+    if bqp.meta.nnzh == 0
+        # no quadratic term (e.g. an LP read as a QP): skip the product with Q
+        _lp_obj!(reshape(bf, 1, length(bf)), bqp.c_batch, bx)
+    else
+        bqp._HX .= bqp.c_batch
+        mul!(bqp._HX, bqp.Q, bx, T(0.5), one(T))
+        batch_mapreduce!(*,+,zero(T),reshape(bf, 1, length(bf)),bqp._HX,bx)
+    end
     bf .+= bqp.c0_batch
     return bf
 end
@@ -213,8 +218,12 @@ function NLPModels.grad!(
     bx::AbstractMatrix,
     bg::AbstractMatrix,
 ) where {T}
-    mul!(bg, bqp.Q, bx)
-    bg .+= bqp.c_batch
+    if bqp.meta.nnzh == 0
+        bg .= bqp.c_batch
+    else
+        mul!(bg, bqp.Q, bx)
+        bg .+= bqp.c_batch
+    end
     return bg
 end
 
