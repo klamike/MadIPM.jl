@@ -581,7 +581,9 @@ function evaluate_model!(batch_solver::AbstractBatchMPCSolver)
     MadNLP.unpack_x!(ws.bx, bcb, batch_solver.x)
     MadNLP.eval_f_wrapper(batch_solver, ws.bx)
     MadNLP.eval_cons_wrapper!(batch_solver, ws.bx)
-    MadNLP.eval_grad_f_wrapper!(batch_solver, ws.bx)
+    # without a quadratic term the gradient is constant: initialize! evaluated
+    # it with the final scaling
+    bcb.nlp.meta.nnzh == 0 || MadNLP.eval_grad_f_wrapper!(batch_solver, ws.bx)
     MadNLP.jtprod!(batch_solver.jacl, batch_solver.kkt, batch_solver.y)
     return
 end
